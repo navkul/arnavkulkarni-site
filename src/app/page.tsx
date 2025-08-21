@@ -108,8 +108,8 @@ export default function Home() {
               <h2 className="text-3xl font-medium mb-12">ABOUT</h2>
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed">
-                  I'm Arnav, a student at Boston University pursuing B.A's in both Computer Science and Economics.
-                  I'm generally interested in distributed systems, but my previous internship at Grepr has me obsesed with
+                  I&apos;m Arnav, a student at Boston University pursuing B.A&apos;s in both Computer Science and Economics.
+                  I&apos;m generally interested in distributed systems, but my previous internship at Grepr has me obsesed with
                   stateful, fault-tolerant, stream processing engines. In my free time, I live and breathe soccer(Arsenal fan unforunately), lift weights,
                   geek out about new AI tools, and attempt to improve my reading and writing skills.
                 </p>
