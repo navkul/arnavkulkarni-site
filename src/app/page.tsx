@@ -64,6 +64,34 @@ export default function Home() {
                   Projects
                 </button>
               </div>
+              
+              {/* Mobile Social Links */}
+              <div className="border-t border-gray-200 mt-4 pt-4">
+                <div className="flex space-x-4">
+                  <a
+                    href="https://github.com/navkul"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    GitHub
+                  </a>
+                  <a
+                    href="https://www.linkedin.com/in/arnav-a-kulkarni/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    LinkedIn
+                  </a>
+                  <a
+                    href="mailto:akul@bu.edu"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    Email
+                  </a>
+                </div>
+              </div>
             </nav>
           </div>
         )}
@@ -79,10 +107,11 @@ export default function Home() {
             <section id="about" className="mb-12">
               <h2 className="text-3xl font-medium mb-12">ABOUT</h2>
               <div className="max-w-2xl">
-                <p className="text-lg leading-relaxed">
-                  I'm Arnav, a Computer Science student at [Your University]. 
-                  I'm passionate about building software that makes a difference 
-                  and solving complex problems through code.
+                <p className="text-md leading-relaxed">
+                  I'm Arnav, a student at Boston University pursuing B.A's in both Computer Science and Economics.
+                  I'm generally interested in distributed systems, but my previous internship at Grepr has me obsesed with
+                  stateful, fault-tolerant, stream processing engines. In my free time, I live and breathe soccer(Arsenal fan unforunately), lift weights,
+                  geek out about new AI tools, and attempt to improve my reading and writing skills.
                 </p>
               </div>
             </section>
@@ -125,6 +154,32 @@ export default function Home() {
         {/* Desktop Index Navigation */}
         <aside className="hidden lg:block w-64 border-l border-gray-200 bg-gray-50">
           <div className="sticky top-0 p-6">
+            {/* Desktop Social Links */}
+            <div className="flex space-x-4 mb-6">
+              <a
+                href="https://github.com/navkul"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:underline"
+              >
+                GitHub
+              </a>
+              <a
+                href="https://www.linkedin.com/in/arnav-a-kulkarni/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:underline"
+              >
+                LinkedIn
+              </a>
+              <a
+                href="mailto:akul@bu.edu"
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Email
+              </a>
+            </div>
+            
             <nav className="space-y-4">
               <div>
                 <a
