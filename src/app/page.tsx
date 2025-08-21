@@ -9,7 +9,14 @@ export default function Home() {
   const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
     if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
+      const offset = 80; // Account for mobile header height
+      const elementPosition = element.getBoundingClientRect().top;
+      const offsetPosition = elementPosition + window.pageYOffset - offset;
+      
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      });
     }
     setIsMobileMenuOpen(false);
   };
@@ -18,8 +25,7 @@ export default function Home() {
     <div className="min-h-screen bg-white text-black">
       {/* Mobile Navigation */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200">
-        <div className="flex justify-between items-center px-4 py-3">
-          <h1 className="text-lg font-semibold">Arnav Kulkarni</h1>
+        <div className="flex justify-end items-center px-4 py-3">
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             className="p-2"
@@ -70,8 +76,8 @@ export default function Home() {
           <div className="max-w-4xl mx-auto px-6 py-12 lg:py-20">
             
             {/* About Section */}
-            <section id="about" className="mb-20">
-              <h2 className="text-3xl font-semibold mb-8">ABOUT</h2>
+            <section id="about" className="mb-12">
+              <h2 className="text-3xl font-medium mb-12">ABOUT</h2>
               <div className="max-w-2xl">
                 <p className="text-lg leading-relaxed">
                   I'm Arnav, a Computer Science student at [Your University]. 
@@ -82,12 +88,12 @@ export default function Home() {
             </section>
 
             {/* Work Section */}
-            <section id="work" className="mb-20">
-              <h2 className="text-3xl font-semibold mb-12">Work</h2>
+            <section id="work" className="mb-12">
+              <h2 className="text-3xl font-medium mb-12">WORK</h2>
               
               {/* Experience Subsection */}
-              <div id="experience" className="mb-16">
-                <h3 className="text-2xl font-medium mb-8">Experience</h3>
+              <div id="experience" className="mb-12">
+                <h3 className="text-2xl font-medium mb-8">EXPERIENCE</h3>
                 <div className="max-w-3xl space-y-8">
                   {experiences.map((experience, index) => (
                     <div key={index}>
@@ -101,7 +107,7 @@ export default function Home() {
 
               {/* Projects Subsection */}
               <div id="projects">
-                <h3 className="text-2xl font-medium mb-8">Projects</h3>
+                <h3 className="text-2xl font-medium mb-8">PROJECTS</h3>
                 <div className="max-w-4xl grid md:grid-cols-2 gap-8">
                   {projects.map((project, index) => (
                     <div key={index}>
@@ -119,7 +125,6 @@ export default function Home() {
         {/* Desktop Index Navigation */}
         <aside className="hidden lg:block w-64 border-l border-gray-200 bg-gray-50">
           <div className="sticky top-0 p-6">
-            <h1 className="text-xl font-semibold mb-8">Arnav Kulkarni</h1>
             <nav className="space-y-4">
               <div>
                 <a
