@@ -22,9 +22,9 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-black">
+    <div className="min-h-screen bg-background text-foreground">
       {/* Mobile Navigation */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200">
+      <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-background border-b border-gray-200">
         <div className="flex justify-end items-center px-4 py-3">
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -36,7 +36,7 @@ export default function Home() {
           </button>
         </div>
         {isMobileMenuOpen && (
-          <div className="border-t border-gray-200 bg-white">
+          <div className="border-t border-gray-200 bg-background">
             <nav className="px-4 py-2 space-y-1">
               <button
                 onClick={() => scrollToSection('about')}
@@ -152,7 +152,7 @@ export default function Home() {
         </main>
 
         {/* Desktop Index Navigation */}
-        <aside className="hidden lg:block w-64 border-l border-gray-200 bg-gray-50">
+        <aside className="hidden lg:block w-64 border-l border-gray-200 bg-background">
           <div className="sticky top-0 p-6">
             {/* Desktop Social Links */}
             <div className="flex space-x-4 mb-6">
