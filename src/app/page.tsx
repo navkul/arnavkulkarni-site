@@ -140,7 +140,21 @@ export default function Home() {
                 <div className="max-w-4xl grid md:grid-cols-2 gap-8">
                   {projects.map((project, index) => (
                     <div key={index}>
-                      <h4 className="text-xl font-medium mb-2">{project.title}</h4>
+                      <h4 className="text-xl font-medium mb-2">
+                        {project.githubUrl ? (
+                          <a
+                            href={project.githubUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:text-blue-600 transition-colors"
+                          >
+                            {project.title}
+                            <span className="ml-2 text-sm text-gray-400">↗</span>
+                          </a>
+                        ) : (
+                          project.title
+                        )}
+                      </h4>
                       <p className="text-gray-600 mb-2">{project.type}</p>
                       <p className="text-sm leading-relaxed">{project.description}</p>
                     </div>
