@@ -10,13 +10,9 @@ export const experiences = [
 
 export const projects = [
   {
-    title: "Lorem Ipsum Dolor",
-    type: "Sit Amet Consectetur",
-    description: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
-  },
-  {
-    title: "Sed Do Eiusmod",
-    type: "Tempor Incididunt",
-    description: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+    title: "Distributed File System (DFS)",
+    type: "Go • p2p ",
+    description: "A decentralized, peer-to-peer distributed file system implementing Content-Addressable Storage (CAS) with AES encryption. Features automatic file replication, fault tolerance, and modular architecture supporting custom transport protocols and storage backends. Built with TCP transport layer and SHA-1 cryptographic hashing for secure file operations across network peers.",
+    githubUrl: "https://github.com/navkul/dfs"
   }
 ];
