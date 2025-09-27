@@ -109,9 +109,10 @@ export default function Home() {
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed">
                   I&apos;m Arnav, a student at Boston University pursuing B.A&apos;s in both Computer Science and Economics.
-                  I&apos;m generally interested in distributed systems, but my previous internship at Grepr has me obsesed with
-                  stateful, fault-tolerant, stream processing engines. In my free time, I live and breathe soccer(Arsenal fan unforunately), lift weights,
-                  geek out about new AI tools, and attempt to improve my reading and writing skills.
+                  I&apos;m mainly interested in distributed systems, but my previous internship at Grepr got me hooked on 
+                  stateful, fault-tolerant, stream processing engines. I also am interested in integrating AI/ML systems into already established SaaS products. 
+                  In my free time, I play and watch soccer(Arsenal fan unforunately), lift weights,
+                  and attempt to improve my reading and writing skills in a world where AI is growing and owning original thought is important.
                 </p>
               </div>
             </section>
@@ -126,9 +127,59 @@ export default function Home() {
                 <div className="max-w-3xl space-y-8">
                   {experiences.map((experience, index) => (
                     <div key={index}>
-                      <h4 className="text-xl font-medium mb-2">{experience.title}</h4>
-                      <p className="text-gray-600 mb-2">{experience.company} • {experience.period}</p>
-                      <p className="text-sm leading-relaxed">{experience.description}</p>
+                      <h4 className="text-xl font-medium mb-2">
+                        {experience.companyUrl ? (
+                          <a
+                            href={experience.companyUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:text-blue-600 transition-colors"
+                          >
+                            {experience.title}
+                          </a>
+                        ) : (
+                          experience.title
+                        )}
+                      </h4>
+                      <p className="text-gray-600 mb-2">
+                        {experience.role && `${experience.role} • `}{experience.location && `${experience.location} • `}{experience.period}
+                      </p>
+                      <ul className="text-sm leading-relaxed space-y-1">
+                        {Array.isArray(experience.description) ? (
+                          experience.description.map((item, i) => (
+                            <li key={i} className="flex items-start">
+                              <span className="text-gray-400 mr-2 mt-1">●</span>
+                              <span>
+                                {i === 1 ? (
+                                  item.split('OpenTelemetry').map((part, j, array) => {
+                                    if (j === array.length - 1) return part;
+                                    return (
+                                      <span key={j}>
+                                        {part}
+                                        <a
+                                          href="https://docs.grepr.ai/sources-sinks/integrations/OpenTelemetry/"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-blue-600 hover:underline"
+                                        >
+                                          OpenTelemetry
+                                        </a>
+                                      </span>
+                                    );
+                                  })
+                                ) : (
+                                  item
+                                )}
+                              </span>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="flex items-start">
+                            <span className="text-gray-400 mr-2 mt-1">●</span>
+                            <span>{experience.description}</span>
+                          </li>
+                        )}
+                      </ul>
                     </div>
                   ))}
                 </div>
@@ -156,7 +207,21 @@ export default function Home() {
                         )}
                       </h4>
                       <p className="text-gray-600 mb-2">{project.type}</p>
-                      <p className="text-sm leading-relaxed">{project.description}</p>
+                      <ul className="text-sm leading-relaxed space-y-1">
+                        {Array.isArray(project.description) ? (
+                          project.description.map((item, i) => (
+                            <li key={i} className="flex items-start">
+                              <span className="text-gray-400 mr-2 mt-1">●</span>
+                              <span>{item}</span>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="flex items-start">
+                            <span className="text-gray-400 mr-2 mt-1">●</span>
+                            <span>{project.description}</span>
+                          </li>
+                        )}
+                      </ul>
                     </div>
                   ))}
                 </div>
