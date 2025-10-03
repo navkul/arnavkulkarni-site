@@ -109,10 +109,10 @@ export default function Home() {
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed">
                   I&apos;m Arnav, a student at Boston University pursuing B.A&apos;s in both Computer Science and Economics.
-                  I&apos;m mainly interested in distributed systems, but my previous internship at Grepr got me hooked on 
-                  stateful, fault-tolerant, stream processing engines. I also am interested in integrating AI/ML systems into already established SaaS products. 
-                  In my free time, I play and watch soccer(Arsenal fan unforunately), lift weights,
-                  and attempt to improve my reading and writing skills in a world where AI is growing and owning original thought is so valuable.
+                  My main interest lies in distributed systems and my recent internship at Grepr sparking fascination with stateful, 
+                  fault-tolerant stream processing engines. I&apos;m also interested in integrating emerging AI/ML systems into established SaaS products. 
+                  In my free time, I enjoy playing and watching soccer (an Arsenal fan, unfortunately), lifting weights, and working on improving my 
+                  reading and writing skills in a world of AI where original thought is invaluable.
                 </p>
               </div>
             </section>
