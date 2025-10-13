@@ -25,5 +25,16 @@ export const projects = [
       "Built with TCP transport layer and SHA-1 cryptographic hashing for secure file operations across network peers"
     ],
     githubUrl: "https://github.com/navkul/dfs"
+  },
+  {
+    title: "PhishSchool (BostonHacks 2025)",
+    type: "FastAPI • Supabase • Vite • Gemini Flash 2.5 • SendGrid",
+    description: [
+      "Interactive platform that helps users learn to spot and avoid phishing with Learn, Detect, and Campaign modules",
+      "AI-assisted detection analyzes .eml emails or any image format to provide a giving users a phishing score, risk level, and key indicators",
+      "Sends custom generate phising emails to users on chosen frequency, keeping track and learning of user failures",
+      "Vite: React/TypeScript + Tailwind (frontend) and FastAPI/Node/Supabase (backend), integrating Google Gemini and Twilio's SendGrid; deployed on Vercel"
+    ],
+    githubUrl: "https://phish-school.vercel.app"
   }
 ];
