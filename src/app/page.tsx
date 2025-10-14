@@ -110,7 +110,7 @@ export default function Home() {
                 <p className="text-md leading-relaxed">
                   I&apos;m Arnav, a student at Boston University pursuing B.A&apos;s in both Computer Science and Economics.
                   My main interest lies in distributed systems and my recent internship at Grepr sparking fascination with stateful, 
-                  fault-tolerant stream processing engines. I&apos;m also interested in integrating emerging AI/ML systems into established SaaS products. 
+                  fault-tolerant stream processing engines. I also like thinking about scaling AI/ML systems in a world where compute continues to become increasingly abundant. 
                   In my free time, I enjoy playing and watching soccer (an Arsenal fan, unfortunately), lifting weights, and working on improving my 
                   reading and writing skills in a world of AI where original thought is invaluable.
                 </p>
