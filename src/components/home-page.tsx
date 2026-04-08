@@ -115,25 +115,31 @@ export function HomePage({ blogs }: HomePageProps) {
           <div className="max-w-4xl mx-auto px-6 py-12 lg:py-20">
             {/* About Section */}
             <section id="about" className="mb-12">
-              <h2 className="text-3xl font-medium mb-12">ABOUT</h2>
+              <h2 className="text-3xl font-medium mb-12">About</h2>
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed">
-                  I&apos;m Arnav, a student at Boston University pursuing B.A&apos;s in both Computer Science and
-                  Economics. My main interest lies in distributed systems and my recent internship at Grepr sparking
-                  fascination with stateful, fault-tolerant stream processing engines. I also like thinking about scaling
-                  AI/ML systems in a world where compute continues to become increasingly abundant. In my free time, I
-                  enjoy playing and watching soccer (an Arsenal fan, unfortunately), lifting weights, and working on
-                  improving my reading and writing skills in a world of AI where original thought is invaluable.
+                  I&apos;m a student at Boston University pursuing a double major in Computer Science and Economics.
+                  I&apos;m primarily interested in distributed systems, with my past internship and current research
+                  focusing on stateful, fault-tolerant stream processing engines. I&apos;m also interested in
+                  distributed infrastructure for AI/ML systems.
+                </p>
+                <p className="text-md leading-relaxed mt-4">
+                  In economics, I enjoy thinking about macroeconomic growth, productivity, and the aggregate impacts
+                  of technological change and automation.
+                </p>
+                <p className="text-md leading-relaxed mt-4">
+                  In my free time, I&apos;m likely playing or watching soccer (an Arsenal fan, sadly), strength
+                  training, or running.
                 </p>
               </div>
             </section>
             {/* Work Section */}
             <section id="work" className="mb-12">
-              <h2 className="text-3xl font-medium mb-12">WORK</h2>
+              <h2 className="text-3xl font-medium mb-12">Work</h2>
 
               {/* Experience Subsection */}
               <div id="experience" className="mb-12">
-                <h3 className="text-2xl font-medium mb-8">EXPERIENCE</h3>
+                <h3 className="text-2xl font-medium mb-8">Experience</h3>
                 <div className="max-w-3xl space-y-8">
                   {experiences.map((experience, index) => (
                     <div key={index}>
@@ -197,7 +203,7 @@ export function HomePage({ blogs }: HomePageProps) {
 
               {/* Projects Subsection */}
               <div id="projects">
-                <h3 className="text-2xl font-medium mb-8">PROJECTS</h3>
+                <h3 className="text-2xl font-medium mb-8">Projects</h3>
                 <div className="max-w-4xl grid md:grid-cols-2 gap-8">
                   {projects.map((project, index) => (
                     <div key={index}>
@@ -240,7 +246,7 @@ export function HomePage({ blogs }: HomePageProps) {
 
             {/* Blogs Section */}
             <section id="blogs" className="mb-12">
-              <h2 className="text-3xl font-medium mb-12">BLOGS</h2>
+              <h2 className="text-3xl font-medium mb-12">Blogs</h2>
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed mb-8">
                   Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus
