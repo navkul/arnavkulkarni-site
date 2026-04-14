@@ -12,6 +12,10 @@ interface HomePageProps {
 
 export function HomePage({ blogs }: HomePageProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const mobileNavButtonClass =
+    'block w-full appearance-none bg-transparent border-0 px-3 text-left text-[color:var(--primary)] underline-offset-4 transition-colors hover:underline focus-visible:underline focus-visible:outline-none active:underline';
+  const mobileNavPrimaryButtonClass = `${mobileNavButtonClass} py-2 text-sm`;
+  const mobileNavSecondaryButtonClass = `${mobileNavButtonClass} py-1 text-xs`;
 
   const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
@@ -47,34 +51,39 @@ export function HomePage({ blogs }: HomePageProps) {
           <div className="border-t border-gray-200 bg-background">
             <nav className="px-4 py-2 space-y-1">
               <button
+                type="button"
                 onClick={() => scrollToSection('about')}
-                className="block w-full text-left py-2 px-3 hover:bg-gray-50 text-sm text-blue-600"
+                className={mobileNavPrimaryButtonClass}
               >
                 About
               </button>
               <button
+                type="button"
                 onClick={() => scrollToSection('work')}
-                className="block w-full text-left py-2 px-3 hover:bg-gray-50 text-sm text-blue-600"
+                className={mobileNavPrimaryButtonClass}
               >
                 Work
               </button>
               <div className="pl-4 space-y-1">
                 <button
+                  type="button"
                   onClick={() => scrollToSection('experience')}
-                  className="block w-full text-left py-1 px-3 text-xs text-blue-600 hover:bg-gray-50"
+                  className={mobileNavSecondaryButtonClass}
                 >
                   Experience
                 </button>
                 <button
+                  type="button"
                   onClick={() => scrollToSection('projects')}
-                  className="block w-full text-left py-1 px-3 text-xs text-blue-600 hover:bg-gray-50"
+                  className={mobileNavSecondaryButtonClass}
                 >
                   Projects
                 </button>
               </div>
               <button
+                type="button"
                 onClick={() => scrollToSection('blogs')}
-                className="block w-full text-left py-2 px-3 hover:bg-gray-50 text-sm text-blue-600"
+                className={mobileNavPrimaryButtonClass}
               >
                 Blogs
               </button>
@@ -249,8 +258,8 @@ export function HomePage({ blogs }: HomePageProps) {
               <h2 className="text-3xl font-medium mb-12">Blogs</h2>
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed mb-8">
-                  Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus
-                  posuere velit aliquet.
+                  Notes on distributed systems, streaming infrastructure, and the engineering tradeoffs that make
+                  production systems behave.
                 </p>
                 {blogs.length === 0 ? (
                   <p className="text-sm text-gray-500">No blogs just yet — check back soon.</p>
