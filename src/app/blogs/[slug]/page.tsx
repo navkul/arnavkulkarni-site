@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { format } from 'date-fns';
 import { getBlogBySlug, getPublishedBlogs } from '@/lib/blogs';
 import BlogPostContent from '@/components/blog-post-content';
+import { getPathLastUpdated } from '@/lib/last-updated';
 
 interface BlogPostPageProps {
   params: Promise<{
@@ -39,18 +40,27 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
     notFound();
   }
 
+  const lastUpdated = await getPathLastUpdated(`content/blogs/${slug}.md`);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="max-w-3xl mx-auto px-6 py-16">
         <Link href="/#blogs" className="text-sm text-blue-600 hover:underline">
-        ← Back
+          ← Back
         </Link>
         <article className="mt-8">
           <header className="mb-10">
             <h1 className="text-4xl font-semibold mb-4">{blog.meta.title}</h1>
-            <time className="text-sm text-gray-500">
-              {format(new Date(blog.meta.date), 'MMMM d, yyyy')}
-            </time>
+            <div className="space-y-1">
+              <time className="block text-sm text-gray-500">
+                Published {format(new Date(blog.meta.date), 'MMMM d, yyyy')}
+              </time>
+              {lastUpdated ? (
+                <p className="text-xs text-gray-400">
+                  Last updated {format(new Date(lastUpdated), 'MMMM d, yyyy')}
+                </p>
+              ) : null}
+            </div>
           </header>
 
           <BlogPostContent html={blog.html} />
