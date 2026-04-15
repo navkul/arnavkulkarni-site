@@ -30,7 +30,6 @@ Required frontmatter:
 
 Optional frontmatter:
 
-- `excerpt`: short summary used for metadata/SEO
 - `published`: set to `false` to hide a draft
 
 Do not add `tags` or a manual `lastUpdated` field. The site does not use tags, and last-updated dates are derived automatically from git history.
@@ -41,7 +40,6 @@ Minimal example:
 ---
 title: "Checkpoint Tuning Notes"
 date: "2026-04-14"
-excerpt: "Short summary for metadata and previews."
 published: true
 ---
 

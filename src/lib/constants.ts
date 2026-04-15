@@ -1,4 +1,6 @@
 // Work data constants
+export const blogIntro = "Trying to improve my writing. Pieces on whatever I find intresting.";
+
 export const experiences = [
   {
     title: "Grepr",

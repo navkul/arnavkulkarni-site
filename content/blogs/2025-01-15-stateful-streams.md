@@ -1,8 +1,7 @@
 ---
 title: "Scaling Stateful Stream Processors"
 date: "2025-01-15"
-excerpt: "Notes on a summer of debugging backpressure and rebalancing strategies in distributed stream processors."
-published: true
+published: false
 ---
 
 Stateful stream processors usually fail long before they fail outright. The first signals are quieter: checkpoint duration starts drifting upward, one shard falls behind the rest, or a rebalance takes much longer than the dashboard said it should. Scaling them is less about finding the highest possible throughput number and more about keeping those failure modes predictable.

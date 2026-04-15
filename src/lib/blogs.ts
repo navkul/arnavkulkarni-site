@@ -1,20 +1,28 @@
 import fs from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
+import { parseISO } from 'date-fns';
 import { remark } from 'remark';
 import html from 'remark-html';
 
 const BLOGS_DIR = path.join(process.cwd(), 'content', 'blogs');
+const WORDS_PER_MINUTE = 200;
+
+type MarkdownNode = {
+  value?: unknown;
+  alt?: unknown;
+  children?: MarkdownNode[];
+};
 
 export interface BlogFrontmatter {
   title: string;
   date: string;
-  excerpt?: string;
   published?: boolean;
 }
 
 export interface BlogMeta extends BlogFrontmatter {
   slug: string;
+  readingTimeMinutes: number;
 }
 
 export interface BlogPost {
@@ -37,6 +45,35 @@ const markdownToHtml = async (markdown: string) => {
   return processed.toString();
 };
 
+const markdownToPlainText = (markdown: string) => {
+  const tree = remark().parse(markdown) as MarkdownNode;
+  const parts: string[] = [];
+
+  const visit = (node: MarkdownNode) => {
+    if (typeof node.value === 'string') {
+      parts.push(node.value);
+    }
+
+    if (typeof node.alt === 'string') {
+      parts.push(node.alt);
+    }
+
+    node.children?.forEach(visit);
+  };
+
+  visit(tree);
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+};
+
+const getBlogStats = (markdown: string) => {
+  const plainText = markdownToPlainText(markdown);
+  const wordCount = plainText === '' ? 0 : plainText.split(/\s+/).length;
+
+  return {
+    readingTimeMinutes: Math.max(1, Math.ceil(wordCount / WORDS_PER_MINUTE)),
+  };
+};
+
 const normalizeSlug = (filename: string) => filename.replace(/\.md$/, '');
 
 const parseMatter = (filePath: string) => {
@@ -57,19 +94,20 @@ export const getPublishedBlogs = (): BlogMeta[] => {
 
   const blogs = files.map((filename) => {
     const slug = normalizeSlug(filename);
-    const { frontmatter } = parseMatter(path.join(BLOGS_DIR, filename));
+    const { frontmatter, content } = parseMatter(path.join(BLOGS_DIR, filename));
 
     return {
       ...frontmatter,
       slug,
+      ...getBlogStats(content),
     };
   });
 
   return blogs
     .filter((blog) => blog.published !== false)
     .sort((a, b) => {
-      const aDate = new Date(a.date).getTime();
-      const bDate = new Date(b.date).getTime();
+      const aDate = parseISO(a.date).getTime();
+      const bDate = parseISO(b.date).getTime();
       return bDate - aDate;
     });
 };
@@ -95,6 +133,7 @@ export const getBlogBySlug = async (slug: string): Promise<BlogPost | null> => {
     meta: {
       ...frontmatter,
       slug,
+      ...getBlogStats(content),
     },
     markdown: content,
     html: htmlContent,
