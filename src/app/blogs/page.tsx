@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { getPublishedBlogs } from '@/lib/blogs';
+import { blogIntro } from '@/lib/constants';
 
 export const metadata = {
   title: 'Blogs | Arnav Kulkarni',
-  description: 'Articles and notes on distributed systems, data platforms, and software engineering.',
+  description: blogIntro,
 };
 
 export default function BlogsPage() {
@@ -15,7 +16,7 @@ export default function BlogsPage() {
       <div className="max-w-3xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-semibold mb-8">Blogs</h1>
         <p className="text-gray-600 mb-12">
-          Long-form thoughts, write-ups, and field notes. Expect distributed systems, data platforms, and plenty of experiments.
+          {blogIntro}
         </p>
 
         {blogs.length === 0 ? (
@@ -33,7 +34,7 @@ export default function BlogsPage() {
                       {blog.title}
                     </h2>
                     <time className="text-sm text-gray-500">
-                      {format(new Date(blog.date), 'MMMM d, yyyy')}
+                      {format(parseISO(blog.date), 'MMMM d, yyyy')}
                     </time>
                   </div>
                 </Link>

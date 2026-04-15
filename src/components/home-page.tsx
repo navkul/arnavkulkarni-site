@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { format } from 'date-fns';
-import { experiences, projects } from '@/lib/constants';
+import { format, parseISO } from 'date-fns';
+import { blogIntro, experiences, projects } from '@/lib/constants';
 import type { BlogMeta } from '@/lib/blogs';
 
 interface HomePageProps {
@@ -258,8 +258,7 @@ export function HomePage({ blogs }: HomePageProps) {
               <h2 className="text-3xl font-medium mb-12">Blogs</h2>
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed mb-8">
-                  Notes on distributed systems, streaming infrastructure, and the engineering tradeoffs that make
-                  production systems behave.
+                  {blogIntro}
                 </p>
                 {blogs.length === 0 ? (
                   <p className="text-sm text-gray-500">No blogs just yet — check back soon.</p>
@@ -275,9 +274,13 @@ export function HomePage({ blogs }: HomePageProps) {
                           >
                             {blog.title}
                           </Link>
-                          <time className="text-sm text-gray-500">
-                            {format(new Date(blog.date), 'MMM d, yyyy')}
-                          </time>
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
+                            <time>
+                              {format(parseISO(blog.date), 'MMM d, yyyy')}
+                            </time>
+                            <span aria-hidden="true">•</span>
+                            <span>{blog.readingTimeMinutes} min read</span>
+                          </div>
                         </div>
                       </li>
                     ))}

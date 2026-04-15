@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { getBlogBySlug, getPublishedBlogs } from '@/lib/blogs';
 import BlogPostContent from '@/components/blog-post-content';
 import { getPathLastUpdated } from '@/lib/last-updated';
@@ -28,7 +28,7 @@ export async function generateMetadata({ params }: BlogPostPageProps) {
 
   return {
     title: `${blog.meta.title} | Arnav Kulkarni`,
-    description: blog.meta.excerpt ?? `Read ${blog.meta.title} by Arnav Kulkarni.`,
+    description: `Read ${blog.meta.title} by Arnav Kulkarni.`,
   };
 }
 
@@ -53,7 +53,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
             <h1 className="text-4xl font-semibold mb-4">{blog.meta.title}</h1>
             <div className="space-y-1">
               <time className="block text-sm text-gray-500">
-                Published {format(new Date(blog.meta.date), 'MMMM d, yyyy')}
+                Published {format(parseISO(blog.meta.date), 'MMMM d, yyyy')}
               </time>
               {lastUpdated ? (
                 <p className="text-xs text-gray-400">
