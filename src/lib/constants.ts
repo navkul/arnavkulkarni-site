@@ -1,5 +1,5 @@
 // Work data constants
-export const blogIntro = "Trying to improve my writing. Pieces on whatever I find intresting.";
+export const blogIntro = "Trying to improve my writing. Pieces on whatever I find interesting.";
 
 export const researchTitle = "CASP Systems Lab";
 export const researchUrl = "https://sites.bu.edu/casp/";
