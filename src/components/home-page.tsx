@@ -3,7 +3,15 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { format, parseISO } from 'date-fns';
-import { blogIntro, experiences, projects } from '@/lib/constants';
+import {
+  blogIntro,
+  experiences,
+  projects,
+  researchDescription,
+  researchLinks,
+  researchTitle,
+  researchUrl,
+} from '@/lib/constants';
 import type { BlogMeta } from '@/lib/blogs';
 
 interface HomePageProps {
@@ -71,6 +79,13 @@ export function HomePage({ blogs }: HomePageProps) {
                   className={mobileNavSecondaryButtonClass}
                 >
                   Experience
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollToSection('research')}
+                  className={mobileNavSecondaryButtonClass}
+                >
+                  Research
                 </button>
                 <button
                   type="button"
@@ -207,6 +222,38 @@ export function HomePage({ blogs }: HomePageProps) {
                       </ul>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              {/* Research Subsection */}
+              <div id="research" className="mb-12">
+                <h3 className="text-2xl font-medium mb-6">Research</h3>
+
+                <div className="max-w-3xl">
+                  <h4 className="text-xl font-medium">
+                    <a
+                      href={researchUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-blue-600 transition-colors"
+                    >
+                      {researchTitle}
+                    </a>
+                  </h4>
+                  <p className="text-sm leading-relaxed mt-3 text-gray-700">{researchDescription}</p>
+                  <div className="flex flex-wrap gap-4 mt-5 text-sm">
+                    {researchLinks.map((link) => (
+                      <a
+                        key={link.href}
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline"
+                      >
+                        {link.label} ↗
+                      </a>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -352,6 +399,16 @@ export function HomePage({ blogs }: HomePageProps) {
                     className="block text-xs text-blue-600"
                   >
                     Experience
+                  </a>
+                  <a
+                    href="#research"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      scrollToSection('research');
+                    }}
+                    className="block text-xs text-blue-600"
+                  >
+                    Research
                   </a>
                   <a
                     href="#projects"

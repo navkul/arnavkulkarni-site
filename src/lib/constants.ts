@@ -1,6 +1,22 @@
 // Work data constants
 export const blogIntro = "Trying to improve my writing. Pieces on whatever I find intresting.";
 
+export const researchTitle = "CASP Systems Lab";
+export const researchUrl = "https://sites.bu.edu/casp/";
+export const researchDescription =
+  "Building a new disaggregated stream processing engine which outperforms Apache Flink.";
+
+export const researchLinks = [
+  {
+    label: "Profile",
+    href: "https://sites.bu.edu/casp/people/arnav-kulkarni/",
+  },
+  {
+    label: "CASP research",
+    href: "https://sites.bu.edu/casp/research/",
+  }
+];
+
 export const experiences = [
   {
     title: "Grepr",
