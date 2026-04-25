@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "prismjs/themes/prism-tomorrow.css";
+@import "leaflet/dist/leaflet.css";
 
 @theme inline {
   --color-background: var(--background);
@@ -91,4 +92,59 @@ a:hover {
 .blog-content pre code {
   background: none;
   padding: 0;
+}
+
+.leaflet-container {
+  background: #020617;
+  font-family: var(--font-ibm-plex-mono), monospace;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid rgb(30 64 175 / 65%) !important;
+}
+
+.leaflet-control-zoom a {
+  background: rgb(15 23 42 / 92%) !important;
+  border-bottom-color: rgb(30 64 175 / 65%) !important;
+  color: #bfdbfe !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: rgb(30 41 59 / 96%) !important;
+}
+
+.race-map-legend {
+  background: rgb(2 6 23 / 86%);
+  border: 1px solid rgb(96 165 250 / 55%);
+  color: #dbeafe;
+  min-width: 7rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.race-map-legend-compact {
+  min-width: 6.5rem;
+}
+
+.race-map-legend-title {
+  font-size: 0.66rem;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+}
+
+.race-map-legend-scale {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  height: 0.38rem;
+  overflow: hidden;
+}
+
+.race-map-legend-scale span {
+  display: block;
+}
+
+.race-map-legend-labels {
+  display: flex;
+  font-size: 0.61rem;
+  justify-content: space-between;
+  margin-top: 0.32rem;
 }
