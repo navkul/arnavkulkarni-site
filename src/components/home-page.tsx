@@ -13,12 +13,181 @@ import {
   researchUrl,
 } from '@/lib/constants';
 import type { BlogMeta } from '@/lib/blogs';
+import type { RunningActivity, RunningOverview } from '@/lib/strava';
+import RaceMap from './race-map';
 
 interface HomePageProps {
   blogs: BlogMeta[];
+  runningOverview: RunningOverview;
 }
 
-export function HomePage({ blogs }: HomePageProps) {
+const formatMovingTime = (minutes: number) => {
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  if (hours === 0) {
+    return `${remainingMinutes}m`;
+  }
+
+  return `${hours}h ${remainingMinutes.toString().padStart(2, '0')}m`;
+};
+
+const formatStat = (value: number | null, suffix: string) => (value === null ? null : `${value}${suffix}`);
+
+const formatElevationRange = (low: number | null, high: number | null) => {
+  if (low === null || high === null) {
+    return null;
+  }
+
+  return `${low}-${high} ft`;
+};
+
+function RaceDetailStats({ race }: { race: RunningActivity }) {
+  const stats = [
+    ['Elapsed', formatMovingTime(race.elapsedMinutes)],
+    ['Avg speed', formatStat(race.averageSpeedMph, ' mph')],
+    ['Max speed', formatStat(race.maxSpeedMph, ' mph')],
+    ['Fastest split', race.fastestSplit ? `Mile ${race.fastestSplit.mile} • ${race.fastestSplit.pacePerMile}/mi` : null],
+    ['Calories', formatStat(race.calories, ' cal')],
+    ['Avg HR', formatStat(race.averageHeartrate, ' bpm')],
+    ['Max HR', formatStat(race.maxHeartrate, ' bpm')],
+    ['Avg cadence', formatStat(race.averageCadence, ' spm')],
+    ['Weighted power', formatStat(race.weightedPower, ' W')],
+    ['Elevation range', formatElevationRange(race.elevationLowFeet, race.elevationHighFeet)],
+  ].filter(([, value]) => value !== null);
+
+  if (stats.length === 0) {
+    return null;
+  }
+
+  return (
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-gray-200 pt-5 text-sm">
+      {stats.map(([label, value]) => (
+        <div key={label}>
+          <dt className="text-xs uppercase text-gray-500">{label}</dt>
+          <dd className="mt-1">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function RunningSection({ runningOverview }: { runningOverview: RunningOverview }) {
+  const { races, weeklyStats } = runningOverview;
+  const syncedAt = runningOverview.fetchedAt ? format(parseISO(runningOverview.fetchedAt), 'MMM d') : null;
+
+  return (
+    <section id="running" className="mb-12">
+      <h2 className="text-3xl font-medium mb-12">Running</h2>
+      <div className="max-w-4xl space-y-10">
+        <div className="max-w-2xl">
+          <p className="text-md leading-relaxed">
+            A small corner for runs, race notes, and experiments with the Strava API. I want it to feel more like a
+            logbook than a trophy shelf: recent routes, what I am working on, and eventually the prep notes behind
+            each race.
+          </p>
+          <p className="mt-3 text-xs text-gray-500">
+            {runningOverview.source === 'strava'
+              ? `Synced from Strava${syncedAt ? ` on ${syncedAt}` : ''}.`
+              : runningOverview.message}
+          </p>
+        </div>
+
+        <div>
+          <h3 className="text-2xl font-medium mb-6">Races</h3>
+          {races.length > 0 ? (
+            <div className="space-y-10">
+              {races.map((race) => (
+                <div
+                  key={race.id}
+                  className="grid gap-8 md:grid-cols-[minmax(0,0.85fr)_minmax(340px,1.15fr)]"
+                >
+                  <div className="space-y-5">
+                    <div>
+                      {race.raceNoteSlug ? (
+                        <Link
+                          href={`/running/races/${race.raceNoteSlug}`}
+                          className="text-xl font-medium hover:text-blue-600 transition-colors"
+                        >
+                          {race.name}
+                        </Link>
+                      ) : (
+                        <h4 className="text-xl font-medium">{race.name}</h4>
+                      )}
+                      <p className="mt-2 text-sm text-gray-600">
+                        {format(parseISO(race.startDate), 'MMM d, yyyy')} • {race.sportType}
+                      </p>
+                    </div>
+
+                    <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-[1.15fr_1fr_1.15fr_1fr]">
+                      <div>
+                        <dt className="text-xs uppercase text-gray-500">Distance</dt>
+                        <dd className="text-lg whitespace-nowrap">{race.distanceMiles} mi</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs uppercase text-gray-500">Time</dt>
+                        <dd className="text-lg whitespace-nowrap">{formatMovingTime(race.movingMinutes)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs uppercase text-gray-500">Pace</dt>
+                        <dd className="text-lg whitespace-nowrap">{race.pacePerMile ? `${race.pacePerMile}/mi` : '—'}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs uppercase text-gray-500">Climb</dt>
+                        <dd className="text-lg whitespace-nowrap">{race.elevationFeet} ft</dd>
+                      </div>
+                    </dl>
+
+                    <RaceDetailStats race={race} />
+                  </div>
+
+                  <RaceMap activity={race} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">
+              No races were detected from recent Strava runs yet. I can also wire this to a manual race list if the
+              automatic matching misses anything.
+            </p>
+          )}
+        </div>
+
+        <div className="max-w-3xl">
+          <h3 className="text-2xl font-medium mb-6">Latest Runs</h3>
+          <div className="mb-8">
+            <p className="text-sm text-gray-600">Last 7 days</p>
+            <p className="mt-2 text-sm leading-relaxed">
+              {weeklyStats.runCount} runs • {weeklyStats.distanceMiles} miles • {weeklyStats.movingHours} hours
+              moving • {weeklyStats.elevationFeet} ft climbing
+            </p>
+          </div>
+          {runningOverview.latestRuns.length > 0 ? (
+            <ul className="space-y-4">
+              {runningOverview.latestRuns.map((run) => (
+                <li key={run.id} className="border-t border-gray-200 pt-4">
+                  <h4 className="font-medium">{run.name}</h4>
+                  <p className="mt-1 text-sm text-gray-600">
+                    {format(parseISO(run.startDate), 'MMM d')} • {run.distanceMiles} mi •{' '}
+                    {formatMovingTime(run.movingMinutes)} •{' '}
+                    {run.pacePerMile ? `${run.pacePerMile}/mi` : 'pace n/a'}
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-500">
+                    {run.description ?? 'No description provided for this activity.'}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-gray-500">Recent runs will appear here after the first successful sync.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function HomePage({ blogs, runningOverview }: HomePageProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const mobileNavButtonClass =
     'block w-full appearance-none bg-transparent border-0 px-3 text-left text-[color:var(--primary)] underline-offset-4 transition-colors hover:underline focus-visible:underline focus-visible:outline-none active:underline';
@@ -95,6 +264,13 @@ export function HomePage({ blogs }: HomePageProps) {
                   Projects
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => scrollToSection('running')}
+                className={mobileNavPrimaryButtonClass}
+              >
+                Running
+              </button>
               <button
                 type="button"
                 onClick={() => scrollToSection('blogs')}
@@ -300,6 +476,8 @@ export function HomePage({ blogs }: HomePageProps) {
               </div>
             </section>
 
+            <RunningSection runningOverview={runningOverview} />
+
             {/* Blogs Section */}
             <section id="blogs" className="mb-12">
               <h2 className="text-3xl font-medium mb-12">Blogs</h2>
@@ -421,6 +599,19 @@ export function HomePage({ blogs }: HomePageProps) {
                     Projects
                   </a>
                 </div>
+              </div>
+
+              <div>
+                <a
+                  href="#running"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    scrollToSection('running');
+                  }}
+                  className="block text-sm text-blue-600"
+                >
+                  Running
+                </a>
               </div>
 
               <div>

@@ -5,7 +5,7 @@ import { parseISO } from 'date-fns';
 import { remark } from 'remark';
 import html from 'remark-html';
 
-const BLOGS_DIR = path.join(process.cwd(), 'content', 'blogs');
+const RACE_NOTES_DIR = path.join(process.cwd(), 'content', 'race-notes');
 const WORDS_PER_MINUTE = 200;
 
 type MarkdownNode = {
@@ -14,27 +14,28 @@ type MarkdownNode = {
   children?: MarkdownNode[];
 };
 
-export interface BlogFrontmatter {
+export interface RaceNoteFrontmatter {
   title: string;
   date: string;
   published?: boolean;
-  tags?: string[];
+  raceName?: string;
+  activityId?: number;
 }
 
-export interface BlogMeta extends BlogFrontmatter {
+export interface RaceNoteMeta extends RaceNoteFrontmatter {
   slug: string;
   readingTimeMinutes: number;
 }
 
-export interface BlogPost {
-  meta: BlogMeta;
+export interface RaceNote {
+  meta: RaceNoteMeta;
   markdown: string;
   html: string;
 }
 
 const isDirectoryAvailable = (() => {
   try {
-    fs.accessSync(BLOGS_DIR, fs.constants.R_OK);
+    fs.accessSync(RACE_NOTES_DIR, fs.constants.R_OK);
     return true;
   } catch {
     return false;
@@ -66,7 +67,7 @@ const markdownToPlainText = (markdown: string) => {
   return parts.join(' ').replace(/\s+/g, ' ').trim();
 };
 
-const getBlogStats = (markdown: string) => {
+const getRaceNoteStats = (markdown: string) => {
   const plainText = markdownToPlainText(markdown);
   const wordCount = plainText === '' ? 0 : plainText.split(/\s+/).length;
 
@@ -75,37 +76,35 @@ const getBlogStats = (markdown: string) => {
   };
 };
 
-const normalizeSlug = (filename: string) => filename.replace(/\.md$/, '');
-
 const parseMatter = (filePath: string) => {
   const fileContents = fs.readFileSync(filePath, 'utf8');
   const { data, content } = matter(fileContents);
   return {
-    frontmatter: data as BlogFrontmatter,
+    frontmatter: data as RaceNoteFrontmatter,
     content,
   };
 };
 
-export const getPublishedBlogs = (): BlogMeta[] => {
+export const getPublishedRaceNotes = (): RaceNoteMeta[] => {
   if (!isDirectoryAvailable) {
     return [];
   }
 
-  const files = fs.readdirSync(BLOGS_DIR).filter((file) => file.endsWith('.md'));
+  const files = fs.readdirSync(RACE_NOTES_DIR).filter((file) => file.endsWith('.md'));
 
-  const blogs = files.map((filename) => {
-    const slug = normalizeSlug(filename);
-    const { frontmatter, content } = parseMatter(path.join(BLOGS_DIR, filename));
+  const raceNotes = files.map((filename) => {
+    const slug = filename.replace(/\.md$/, '');
+    const { frontmatter, content } = parseMatter(path.join(RACE_NOTES_DIR, filename));
 
     return {
       ...frontmatter,
       slug,
-      ...getBlogStats(content),
+      ...getRaceNoteStats(content),
     };
   });
 
-  return blogs
-    .filter((blog) => blog.published !== false)
+  return raceNotes
+    .filter((raceNote) => raceNote.published !== false)
     .sort((a, b) => {
       const aDate = parseISO(a.date).getTime();
       const bDate = parseISO(b.date).getTime();
@@ -113,12 +112,12 @@ export const getPublishedBlogs = (): BlogMeta[] => {
     });
 };
 
-export const getBlogBySlug = async (slug: string): Promise<BlogPost | null> => {
+export const getRaceNoteBySlug = async (slug: string): Promise<RaceNote | null> => {
   if (!isDirectoryAvailable) {
     return null;
   }
 
-  const fullPath = path.join(BLOGS_DIR, `${slug}.md`);
+  const fullPath = path.join(RACE_NOTES_DIR, `${slug}.md`);
   if (!fs.existsSync(fullPath)) {
     return null;
   }
@@ -134,7 +133,7 @@ export const getBlogBySlug = async (slug: string): Promise<BlogPost | null> => {
     meta: {
       ...frontmatter,
       slug,
-      ...getBlogStats(content),
+      ...getRaceNoteStats(content),
     },
     markdown: content,
     html: htmlContent,

@@ -1,7 +1,12 @@
 import { getPublishedBlogs } from '@/lib/blogs';
+import { getRunningOverview } from '@/lib/strava';
 import HomePage from '@/components/home-page';
 
-export default function Home() {
+export const revalidate = 604800;
+
+export default async function Home() {
   const blogs = getPublishedBlogs();
-  return <HomePage blogs={blogs} />;
+  const runningOverview = await getRunningOverview();
+
+  return <HomePage blogs={blogs} runningOverview={runningOverview} />;
 }
