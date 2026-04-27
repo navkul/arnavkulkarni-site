@@ -82,9 +82,8 @@ function RunningSection({ runningOverview }: { runningOverview: RunningOverview 
       <div className="max-w-4xl space-y-10">
         <div className="max-w-2xl">
           <p className="text-md leading-relaxed">
-            A small corner for runs, race notes, and experiments with the Strava API. I want it to feel more like a
-            logbook than a trophy shelf: recent routes, what I am working on, and eventually the prep notes behind
-            each race.
+            I&apos;ve hated running till Oct 2025. Honestly not sure what changed, but I&apos;m hooked. Sharing some of
+            my races and training with the pretty neat Strava API.
           </p>
           <p className="mt-3 text-xs text-gray-500">
             {runningOverview.source === 'strava'
