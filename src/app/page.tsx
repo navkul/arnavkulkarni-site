@@ -2,7 +2,7 @@ import { getPublishedBlogs } from '@/lib/blogs';
 import { getRunningOverview } from '@/lib/strava';
 import HomePage from '@/components/home-page';
 
-export const revalidate = 604800;
+export const revalidate = 86400;
 
 export default async function Home() {
   const blogs = getPublishedBlogs();
