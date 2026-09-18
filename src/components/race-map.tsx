@@ -30,7 +30,10 @@ const getQuantile = (values: number[], quantile: number) => {
   }
 
   const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * quantile)));
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.floor((sorted.length - 1) * quantile)),
+  );
   return sorted[index];
 };
 
@@ -57,7 +60,10 @@ const getPaceColor = (speed: number | null, speeds: number[], paceRange: PaceRan
   const range = max - min || 1;
   const normalized = Math.min(1, Math.max(0, (speed - min) / range));
   const boosted = Math.pow(normalized, 0.58);
-  const colorIndex = Math.min(paceColors.length - 1, Math.max(0, Math.floor(boosted * paceColors.length)));
+  const colorIndex = Math.min(
+    paceColors.length - 1,
+    Math.max(0, Math.floor(boosted * paceColors.length)),
+  );
   return paceColors[colorIndex];
 };
 
@@ -204,7 +210,11 @@ function RaceMap({ activity }: { activity: RunningActivity }) {
 
   return (
     <div className="aspect-square w-full max-w-[25.5rem] overflow-hidden border border-blue-200 bg-slate-950 md:justify-self-end">
-      <div ref={containerRef} className="h-full w-full" aria-label={`Pace map for ${activity.name}`} />
+      <div
+        ref={containerRef}
+        className="h-full w-full"
+        aria-label={`Pace map for ${activity.name}`}
+      />
     </div>
   );
 }

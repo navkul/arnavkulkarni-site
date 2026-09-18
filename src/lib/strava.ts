@@ -156,7 +156,7 @@ const metersPerSecondToMilesPerHour = (value: number | null | undefined) =>
 const metersToFeet = (value: number | null | undefined) =>
   typeof value === 'number' ? Math.round(value / METERS_PER_FOOT) : null;
 
-const downsample = <T,>(items: T[], maxItems: number) => {
+const downsample = <T>(items: T[], maxItems: number) => {
   if (items.length <= maxItems) {
     return items;
   }
@@ -182,7 +182,10 @@ const getQuantile = (values: number[], quantile: number) => {
   }
 
   const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * quantile)));
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.round((sorted.length - 1) * quantile)),
+  );
   return sorted[index];
 };
 
@@ -235,7 +238,10 @@ const toProjectedPoint = (
   };
 };
 
-const getDistanceMeters = ([startLat, startLng]: [number, number], [endLat, endLng]: [number, number]) => {
+const getDistanceMeters = (
+  [startLat, startLng]: [number, number],
+  [endLat, endLng]: [number, number],
+) => {
   const radiusMeters = 6371000;
   const toRadians = (value: number) => (value * Math.PI) / 180;
   const dLat = toRadians(endLat - startLat);
@@ -252,7 +258,10 @@ const interpolateCoordinate = (
   start: [number, number],
   end: [number, number],
   ratio: number,
-): [number, number] => [start[0] + (end[0] - start[0]) * ratio, start[1] + (end[1] - start[1]) * ratio];
+): [number, number] => [
+  start[0] + (end[0] - start[0]) * ratio,
+  start[1] + (end[1] - start[1]) * ratio,
+];
 
 const getCoordinateAtDistance = (coordinates: Array<[number, number]>, targetMeters: number) => {
   let coveredMeters = 0;
@@ -314,7 +323,8 @@ const buildRoute = (polyline: string | null | undefined, distanceMeters: number)
   }
 };
 
-const buildRoutePath = (polyline: string | null | undefined) => buildRoute(polyline, 0)?.path ?? null;
+const buildRoutePath = (polyline: string | null | undefined) =>
+  buildRoute(polyline, 0)?.path ?? null;
 
 const buildMileMarkers = (
   coordinates: Array<[number, number]>,
@@ -351,7 +361,10 @@ const buildMileMarkers = (
   });
 };
 
-const buildElevationProfile = (distanceStream: number[] | undefined, altitudeStream: number[] | undefined) => {
+const buildElevationProfile = (
+  distanceStream: number[] | undefined,
+  altitudeStream: number[] | undefined,
+) => {
   if (!distanceStream?.length || !altitudeStream?.length) {
     return [];
   }
@@ -387,8 +400,13 @@ const buildCoursePoints = (
   return downsample(points, 500);
 };
 
-const buildPaceRange = (velocityStream: number[] | undefined, movingStream: boolean[] | undefined) => {
-  const movingSpeeds = velocityStream?.filter((speed, index) => speed > 0 && (movingStream ? movingStream[index] : true));
+const buildPaceRange = (
+  velocityStream: number[] | undefined,
+  movingStream: boolean[] | undefined,
+) => {
+  const movingSpeeds = velocityStream?.filter(
+    (speed, index) => speed > 0 && (movingStream ? movingStream[index] : true),
+  );
   const speeds = movingSpeeds?.filter(
     (speed) => speed >= MIN_USEFUL_RUNNING_SPEED && speed <= MAX_USEFUL_RUNNING_SPEED,
   );
@@ -423,7 +441,9 @@ const buildPaceRange = (velocityStream: number[] | undefined, movingStream: bool
 const buildCourse = (activity: StravaActivity, streams: StravaStreamSet | null | undefined) => {
   const coordinates =
     streams?.latlng?.data ??
-    (activity.map?.polyline ? decodePolyline(activity.map.polyline) : decodePolyline(activity.map?.summary_polyline ?? ''));
+    (activity.map?.polyline
+      ? decodePolyline(activity.map.polyline)
+      : decodePolyline(activity.map?.summary_polyline ?? ''));
 
   if (coordinates.length < 2) {
     return null;
@@ -499,7 +519,10 @@ const formatMovingDuration = (seconds: number) => {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 };
 
-const toRunningActivity = (activity: StravaActivity, streams?: StravaStreamSet | null): RunningActivity => ({
+const toRunningActivity = (
+  activity: StravaActivity,
+  streams?: StravaStreamSet | null,
+): RunningActivity => ({
   id: activity.id,
   name: activity.name,
   distanceMiles: round(activity.distance / METERS_PER_MILE),
@@ -519,12 +542,16 @@ const toRunningActivity = (activity: StravaActivity, streams?: StravaStreamSet |
   calories: typeof activity.calories === 'number' ? Math.round(activity.calories) : null,
   averageHeartrate:
     typeof activity.average_heartrate === 'number' ? Math.round(activity.average_heartrate) : null,
-  maxHeartrate: typeof activity.max_heartrate === 'number' ? Math.round(activity.max_heartrate) : null,
-  averageCadence: typeof activity.average_cadence === 'number' ? round(activity.average_cadence, 1) : null,
+  maxHeartrate:
+    typeof activity.max_heartrate === 'number' ? Math.round(activity.max_heartrate) : null,
+  averageCadence:
+    typeof activity.average_cadence === 'number' ? round(activity.average_cadence, 1) : null,
   elevationHighFeet: metersToFeet(activity.elev_high),
   elevationLowFeet: metersToFeet(activity.elev_low),
   weightedPower:
-    typeof activity.weighted_average_watts === 'number' ? Math.round(activity.weighted_average_watts) : null,
+    typeof activity.weighted_average_watts === 'number'
+      ? Math.round(activity.weighted_average_watts)
+      : null,
   fastestSplit: getFastestSplit(activity.splits_standard),
   splits: buildSplits(activity.splits_standard),
 });

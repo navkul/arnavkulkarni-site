@@ -50,7 +50,9 @@ const readFileTimestamp = (relativePath: string) => {
 
   try {
     return normalizeTimestamp(
-      fs.statSync(path.join(REPO_ROOT, 'content', relativePath.slice('content/'.length))).mtime.toISOString(),
+      fs
+        .statSync(path.join(REPO_ROOT, 'content', relativePath.slice('content/'.length)))
+        .mtime.toISOString(),
     );
   } catch {
     return null;

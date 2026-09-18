@@ -32,7 +32,8 @@ const formatMovingTime = (minutes: number) => {
   return `${hours}h ${remainingMinutes.toString().padStart(2, '0')}m`;
 };
 
-const formatStat = (value: number | null, suffix: string) => (value === null ? null : `${value}${suffix}`);
+const formatStat = (value: number | null, suffix: string) =>
+  value === null ? null : `${value}${suffix}`;
 
 const formatElevationRange = (low: number | null, high: number | null) => {
   if (low === null || high === null) {
@@ -47,7 +48,12 @@ function RaceDetailStats({ race }: { race: RunningActivity }) {
     ['Elapsed', formatMovingTime(race.elapsedMinutes)],
     ['Avg speed', formatStat(race.averageSpeedMph, ' mph')],
     ['Max speed', formatStat(race.maxSpeedMph, ' mph')],
-    ['Fastest split', race.fastestSplit ? `Mile ${race.fastestSplit.mile} • ${race.fastestSplit.pacePerMile}/mi` : null],
+    [
+      'Fastest split',
+      race.fastestSplit
+        ? `Mile ${race.fastestSplit.mile} • ${race.fastestSplit.pacePerMile}/mi`
+        : null,
+    ],
     ['Calories', formatStat(race.calories, ' cal')],
     ['Avg HR', formatStat(race.averageHeartrate, ' bpm')],
     ['Max HR', formatStat(race.maxHeartrate, ' bpm')],
@@ -74,7 +80,9 @@ function RaceDetailStats({ race }: { race: RunningActivity }) {
 
 function RunningSection({ runningOverview }: { runningOverview: RunningOverview }) {
   const { races, weeklyStats } = runningOverview;
-  const syncedAt = runningOverview.fetchedAt ? format(parseISO(runningOverview.fetchedAt), 'MMM d') : null;
+  const syncedAt = runningOverview.fetchedAt
+    ? format(parseISO(runningOverview.fetchedAt), 'MMM d')
+    : null;
 
   return (
     <section id="running" className="mb-12">
@@ -82,8 +90,8 @@ function RunningSection({ runningOverview }: { runningOverview: RunningOverview 
       <div className="max-w-4xl space-y-10">
         <div className="max-w-2xl">
           <p className="text-md leading-relaxed">
-	   I&apos;ve hated running till Oct 2025. Honestly not sure what changed, but I&apos;m hooked. Sharing some of
-           my races and training with the pretty neat Strava API.	
+            I&apos;ve hated running till Oct 2025. Honestly not sure what changed, but I&apos;m
+            hooked. Sharing some of my races and training with the pretty neat Strava API.
           </p>
           <p className="mt-3 text-xs text-gray-500">
             {runningOverview.source === 'strava'
@@ -125,11 +133,15 @@ function RunningSection({ runningOverview }: { runningOverview: RunningOverview 
                       </div>
                       <div>
                         <dt className="text-xs uppercase text-gray-500">Time</dt>
-                        <dd className="text-lg whitespace-nowrap">{formatMovingTime(race.movingMinutes)}</dd>
+                        <dd className="text-lg whitespace-nowrap">
+                          {formatMovingTime(race.movingMinutes)}
+                        </dd>
                       </div>
                       <div>
                         <dt className="text-xs uppercase text-gray-500">Pace</dt>
-                        <dd className="text-lg whitespace-nowrap">{race.pacePerMile ? `${race.pacePerMile}/mi` : '—'}</dd>
+                        <dd className="text-lg whitespace-nowrap">
+                          {race.pacePerMile ? `${race.pacePerMile}/mi` : '—'}
+                        </dd>
                       </div>
                       <div>
                         <dt className="text-xs uppercase text-gray-500">Climb</dt>
@@ -146,8 +158,8 @@ function RunningSection({ runningOverview }: { runningOverview: RunningOverview 
             </div>
           ) : (
             <p className="text-sm text-gray-500">
-              No races were detected from recent Strava runs yet. I can also wire this to a manual race list if the
-              automatic matching misses anything.
+              No races were detected from recent Strava runs yet. I can also wire this to a manual
+              race list if the automatic matching misses anything.
             </p>
           )}
         </div>
@@ -157,8 +169,8 @@ function RunningSection({ runningOverview }: { runningOverview: RunningOverview 
           <div className="mb-8">
             <p className="text-sm text-gray-600">Last 7 days</p>
             <p className="mt-2 text-sm leading-relaxed">
-              {weeklyStats.runCount} runs • {weeklyStats.distanceMiles} miles • {weeklyStats.movingHours} hours
-              moving • {weeklyStats.elevationFeet} ft climbing
+              {weeklyStats.runCount} runs • {weeklyStats.distanceMiles} miles •{' '}
+              {weeklyStats.movingHours} hours moving • {weeklyStats.elevationFeet} ft climbing
             </p>
           </div>
           {runningOverview.latestRuns.length > 0 ? (
@@ -178,7 +190,9 @@ function RunningSection({ runningOverview }: { runningOverview: RunningOverview 
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-gray-500">Recent runs will appear here after the first successful sync.</p>
+            <p className="text-sm text-gray-500">
+              Recent runs will appear here after the first successful sync.
+            </p>
           )}
         </div>
       </div>
@@ -219,7 +233,12 @@ export function HomePage({ blogs, runningOverview }: HomePageProps) {
             aria-label="Toggle navigation"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16"
+              />
             </svg>
           </button>
         </div>
@@ -317,18 +336,19 @@ export function HomePage({ blogs, runningOverview }: HomePageProps) {
               <h2 className="text-3xl font-medium mb-12">About</h2>
               <div className="max-w-2xl">
                 <p className="text-md leading-relaxed">
-                  I&apos;m a student at Boston University pursuing a double major in Computer Science and Economics.
-                  I&apos;m primarily interested in distributed systems, with my past internship and current research
-                  focusing on stateful, fault-tolerant stream processing engines. I&apos;m also interested in
-                  distributed infrastructure for AI/ML systems.
+                  I&apos;m a student at Boston University pursuing a double major in Computer
+                  Science and Economics. I&apos;m primarily interested in distributed systems, with
+                  my past internship and current research focusing on stateful, fault-tolerant
+                  stream processing engines. I&apos;m also interested in distributed infrastructure
+                  for AI/ML systems.
                 </p>
                 <p className="text-md leading-relaxed mt-4">
-                  In economics, I enjoy thinking about macroeconomic growth, productivity, and the aggregate impacts
-                  of technological change and automation.
+                  In economics, I enjoy thinking about macroeconomic growth, productivity, and the
+                  aggregate impacts of technological change and automation.
                 </p>
                 <p className="text-md leading-relaxed mt-4">
-                  In my free time, I&apos;m likely playing or watching soccer (an Arsenal fan, sadly), strength
-                  training, or running.
+                  In my free time, I&apos;m likely playing or watching soccer (an Arsenal fan,
+                  sadly), strength training, or running.
                 </p>
               </div>
             </section>
@@ -415,7 +435,9 @@ export function HomePage({ blogs, runningOverview }: HomePageProps) {
                       {researchTitle}
                     </a>
                   </h4>
-                  <p className="text-sm leading-relaxed mt-3 text-gray-700">{researchDescription}</p>
+                  <p className="text-sm leading-relaxed mt-3 text-gray-700">
+                    {researchDescription}
+                  </p>
                   <div className="flex flex-wrap gap-4 mt-5 text-sm">
                     {researchLinks.map((link) => (
                       <a
@@ -481,9 +503,7 @@ export function HomePage({ blogs, runningOverview }: HomePageProps) {
             <section id="blogs" className="mb-12">
               <h2 className="text-3xl font-medium mb-12">Blogs</h2>
               <div className="max-w-2xl">
-                <p className="text-md leading-relaxed mb-8">
-                  {blogIntro}
-                </p>
+                <p className="text-md leading-relaxed mb-8">{blogIntro}</p>
                 {blogs.length === 0 ? (
                   <p className="text-sm text-gray-500">No blogs just yet — check back soon.</p>
                 ) : (
@@ -499,9 +519,7 @@ export function HomePage({ blogs, runningOverview }: HomePageProps) {
                             {blog.title}
                           </Link>
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
-                            <time>
-                              {format(parseISO(blog.date), 'MMM d, yyyy')}
-                            </time>
+                            <time>{format(parseISO(blog.date), 'MMM d, yyyy')}</time>
                             <span aria-hidden="true">•</span>
                             <span>{blog.readingTimeMinutes} min read</span>
                           </div>

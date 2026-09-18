@@ -1,8 +1,8 @@
 ---
-title: "Newport Half"
-date: "2026-04-18"
+title: 'Newport Half'
+date: '2026-04-18'
 published: true
-raceName: "Newport Half"
+raceName: 'Newport Half'
 activityId: 18158203606
 ---
 
