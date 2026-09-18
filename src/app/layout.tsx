@@ -23,7 +23,7 @@ export default async function RootLayout({
   const siteLastUpdated = await getSiteLastUpdated();
 
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body
         className={`${ibmPlexMono.variable} antialiased`}
       >
