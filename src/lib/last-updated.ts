@@ -44,9 +44,13 @@ const readGitTimestamp = (args: string[]) => {
 };
 
 const readFileTimestamp = (relativePath: string) => {
+  if (!relativePath.startsWith('content/')) {
+    return null;
+  }
+
   try {
     return normalizeTimestamp(
-      fs.statSync(path.join(REPO_ROOT, relativePath)).mtime.toISOString(),
+      fs.statSync(path.join(REPO_ROOT, 'content', relativePath.slice('content/'.length))).mtime.toISOString(),
     );
   } catch {
     return null;
