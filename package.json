@@ -9,7 +9,12 @@
     "dev": "WATCHPACK_POLLING=true next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test:e2e": "playwright test",
+    "test:e2e:unavailable": "E2E_STRAVA_MODE=unavailable playwright test"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",
@@ -24,6 +29,7 @@
     "remark-html": "^16.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/prismjs": "^1.26.6",
@@ -31,7 +37,9 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
+    "prettier": "3.9.8",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "undici": "8.10.2"
   }
 }
