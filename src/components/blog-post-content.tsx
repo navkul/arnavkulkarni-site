@@ -19,11 +19,7 @@ export function BlogPostContent({ html }: BlogPostContentProps) {
   }, [html]);
 
   return (
-    <div
-      ref={contentRef}
-      className="blog-content"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <div ref={contentRef} className="blog-content" dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 

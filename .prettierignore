@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+playwright-report/
+test-results/
+package-lock.json
+next-env.d.ts
+*.tsbuildinfo
+*.log
+.env*
+PRDs/
+# Maintained by Next.js itself.
+AGENTS.md
+CLAUDE.md

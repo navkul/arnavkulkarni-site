@@ -1,8 +1,8 @@
 ---
-title: "Gloucester Half"
-date: "2025-12-07"
+title: 'Gloucester Half'
+date: '2025-12-07'
 published: true
-raceName: "Gloucester Half"
+raceName: 'Gloucester Half'
 activityId: 16676946767
 ---
 

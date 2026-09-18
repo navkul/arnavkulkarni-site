@@ -53,7 +53,9 @@ export default async function RaceNotePage({ params }: RaceNotePageProps) {
             <h1 className="text-4xl font-semibold mb-4">{raceNote.meta.title}</h1>
             <div className="space-y-1">
               <p className="text-sm text-gray-500">Race note</p>
-              <time className="block text-xs text-gray-400">Raced {format(parseISO(raceNote.meta.date), 'MMMM d, yyyy')}</time>
+              <time className="block text-xs text-gray-400">
+                Raced {format(parseISO(raceNote.meta.date), 'MMMM d, yyyy')}
+              </time>
               {lastUpdated ? (
                 <p className="text-xs text-gray-400">
                   Last updated {format(new Date(lastUpdated), 'MMMM d, yyyy')}
