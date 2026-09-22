@@ -94,7 +94,6 @@ function RaceMap({ activity }: { activity: RunningActivity }) {
       }
 
       const map = L.map(containerRef.current, {
-        attributionControl: false,
         scrollWheelZoom: false,
         zoomControl: false,
       });
@@ -105,11 +104,17 @@ function RaceMap({ activity }: { activity: RunningActivity }) {
         })
         .addTo(map);
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 20,
-        subdomains: 'abcd',
-        opacity: 1,
-      }).addTo(map);
+      const basemapKey = process.env.NEXT_PUBLIC_CARTO_BASEMAP_API_KEY ?? '';
+      L.tileLayer(
+        `https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(basemapKey)}`,
+        {
+          maxZoom: 20,
+          subdomains: 'abcd',
+          opacity: 1,
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        },
+      ).addTo(map);
 
       const positions = activity.course.points.map((point) => point.position);
       const baseRoute = L.polyline(positions, {

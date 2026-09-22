@@ -25,6 +25,12 @@ test('both race maps render and zoom', async ({ page }) => {
     const route = map.locator('.leaflet-overlay-pane path').first();
     await expect(route).toHaveAttribute('d', /^M/);
     await expect(map.locator('.leaflet-tile-loaded').first()).toBeAttached();
+    const tileUrl = new URL(
+      (await map.locator('.leaflet-tile-loaded').first().getAttribute('src'))!,
+    );
+    expect(tileUrl.searchParams.get('key')).toBe('synthetic-carto-key');
+    await expect(map.getByRole('link', { name: 'OpenStreetMap', exact: true })).toBeVisible();
+    await expect(map.getByRole('link', { name: 'CARTO', exact: true })).toBeVisible();
     const original = await route.getAttribute('d');
     await map.getByRole('button', { name: 'Zoom in', exact: true }).click();
     await expect.poll(() => route.getAttribute('d')).not.toBe(original);
