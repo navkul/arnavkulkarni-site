@@ -46,6 +46,14 @@ artifact.
 Failure screenshots and traces are saved under `test-results/`; HTML reports are
 saved under `playwright-report/`, with separate directories for each scenario.
 
+## TypeScript toolchain
+
+Type checking and Next.js builds use TypeScript 7.0.2 through the
+`@typescript/native` npm alias, which supplies `tsc`. The `typescript` dependency
+aliases `@typescript/typescript6` so ESLint and editor plugins can still use the
+TypeScript 6 JavaScript API. Keep both aliases: TypeScript 7.0 does not provide
+that API. This follows [Microsoft's side-by-side setup](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0).
+
 ## Continuous integration and deployment gates
 
 `.github/workflows/ci.yml` runs on PRs targeting `main`, pushes to `main` (including
