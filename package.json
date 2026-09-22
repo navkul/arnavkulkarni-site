@@ -35,11 +35,12 @@
     "@types/prismjs": "^1.26.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.3.5",
     "prettier": "3.9.8",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",
-    "undici": "8.10.2"
+    "undici": "8.10.2",
+    "@eslint/compat": "2.1.1"
   }
 }
