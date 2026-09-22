@@ -5,6 +5,13 @@ locked dependencies with `npm ci`.
 
 ## Development and checks
 
+Race maps require a free [CARTO Basemaps API key](https://carto.com/basemaps/apikey/).
+Set `NEXT_PUBLIC_CARTO_BASEMAP_API_KEY` in `.env.local` for local development and
+in the Vercel project's environment variables before building. Next.js embeds
+this browser-visible key at build time, so changing it requires a new deployment.
+Restrict the key to the site's domains and any local or preview hosts you use.
+CARTO and OpenStreetMap attribution must remain visible on both maps.
+
 ```sh
 nvm use
 npm ci
