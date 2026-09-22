@@ -19,6 +19,7 @@ const env = {
   STRAVA_CLIENT_SECRET: '',
   STRAVA_REFRESH_TOKEN: '',
   NEXT_TELEMETRY_DISABLED: '1',
+  NEXT_PUBLIC_CARTO_BASEMAP_API_KEY: 'synthetic-carto-key',
 };
 
 let child;
