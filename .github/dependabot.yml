@@ -12,6 +12,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Keep Node types aligned with .nvmrc, package.json engines, and Vercel.
+    ignore:
+      - dependency-name: '@types/node'
+        versions: ['>=23']
     groups:
       next:
         patterns: ['next', 'eslint-config-next']
