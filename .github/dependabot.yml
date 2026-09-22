@@ -17,3 +17,5 @@ updates:
         patterns: ['next', 'eslint-config-next']
       react:
         patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
+      tailwind:
+        patterns: ['tailwindcss', '@tailwindcss/*']
