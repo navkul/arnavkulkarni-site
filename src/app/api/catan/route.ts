@@ -105,7 +105,10 @@ export async function POST(request: NextRequest) {
   try {
     // All mutations are same-origin JSON requests. Cookies alone cannot authorize cross-site writes.
     const origin = request.headers.get('origin');
-    if (origin !== request.nextUrl.origin || request.headers.get('sec-fetch-site') === 'cross-site')
+    if (
+      origin !== `${request.nextUrl.protocol}//${request.headers.get('host')}` ||
+      request.headers.get('sec-fetch-site') === 'cross-site'
+    )
       throw new ServiceError('Cross-site request rejected.', 403);
     if (!request.headers.get('content-type')?.startsWith('application/json'))
       throw new ServiceError('Use application/json.', 415);

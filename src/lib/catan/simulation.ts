@@ -274,7 +274,8 @@ export async function evaluate(
 ): Promise<Odds> {
   const samples = options.samples ?? 32,
     maxActions = options.maxActions ?? 1200;
-  const totals = game.players.map(() => 0);
+  // A small symmetric prior avoids claiming impossibility from a finite sample.
+  const totals = game.players.map(() => 0.5);
   let completed = 0;
   if (game.winner !== undefined) {
     const probabilities = totals.map((_, i) => (i === game.winner ? 100 : 0));
@@ -304,7 +305,9 @@ export async function evaluate(
     } else horizonWeights(state).forEach((weight, i) => (totals[i] += weight));
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  const probabilities = totals.map((v) => Math.round((v / samples) * 1000) / 10);
+  const probabilities = totals.map(
+    (v) => Math.round((v / (samples + game.players.length * 0.5)) * 1000) / 10,
+  );
   // Force the displayed distribution to sum to exactly 100 despite rounding.
   const largest = probabilities.indexOf(Math.max(...probabilities));
   probabilities[largest] =

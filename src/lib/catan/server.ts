@@ -14,7 +14,7 @@ export function getStore(): CatanStore {
         'Catan requires a persistent Node host. Set CATAN_DATABASE_PATH to durable SQLite storage.',
       );
     globals.catanStore = new CatanStore(
-      resolve(process.env.CATAN_DATABASE_PATH ?? '.data/catan.sqlite'),
+      resolve(/* turbopackIgnore: true */ process.env.CATAN_DATABASE_PATH ?? '.data/catan.sqlite'),
     );
   }
   return globals.catanStore;
@@ -39,7 +39,9 @@ export function queueEvaluation(room: Room): Promise<void> {
           .filter((o) => o.revision < snapshot.revision)
           .at(-1);
         if (current.odds && current.odds.revision >= snapshot.revision) return;
-        const odds = await evaluate(snapshot.game!, snapshot.revision, previous);
+        const configured = Number(process.env.CATAN_SIMULATION_SAMPLES ?? 32);
+        const samples = Number.isInteger(configured) ? Math.max(8, Math.min(256, configured)) : 32;
+        const odds = await evaluate(snapshot.game!, snapshot.revision, previous, { samples });
         store.saveOdds(snapshot.code, odds);
       } catch (error) {
         console.error('Catan evaluation failed', error);
