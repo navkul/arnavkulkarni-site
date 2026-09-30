@@ -297,6 +297,9 @@ export function HomePage({ blogs, runningOverview }: HomePageProps) {
                 Blogs
               </button>
 
+              <Link href="/catan" className="block px-2 py-2 text-blue-600">
+                Play Catan
+              </Link>
               {/* Mobile Social Links */}
               <div className="border-t border-gray-200 mt-4 pt-4">
                 <div className="flex space-x-4">
@@ -642,6 +645,11 @@ export function HomePage({ blogs, runningOverview }: HomePageProps) {
                 >
                   Blogs
                 </a>
+              </div>
+              <div>
+                <Link href="/catan" className="block text-sm text-blue-600">
+                  Play Catan
+                </Link>
               </div>
             </nav>
           </div>

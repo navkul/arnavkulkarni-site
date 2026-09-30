@@ -1,0 +1,243 @@
+'use client';
+import { useState } from 'react';
+import type { Board as BoardState } from '@/lib/catan/types';
+export const PLAYER_COLORS = ['#c65335', '#287eb2', '#d29621', '#7763b6', '#448369', '#c36192'];
+export const RESOURCE_COLORS = {
+  wood: '#487b58',
+  brick: '#b36b4e',
+  sheep: '#9baa62',
+  wheat: '#d6b257',
+  ore: '#87949b',
+  desert: '#ddc8a0',
+};
+export default function Board({
+  board,
+  vertices,
+  edges,
+  robber,
+  onVertex,
+  onEdge,
+  onHex,
+  selectedEdges = [],
+}: {
+  board: BoardState;
+  vertices: number[];
+  edges: number[];
+  robber: boolean;
+  onVertex: (id: number) => void;
+  onEdge: (id: number) => void;
+  onHex: (id: number) => void;
+  selectedEdges?: number[];
+}) {
+  const [zoom, setZoom] = useState(false);
+  const extentX = Math.max(...board.vertices.map((v) => Math.abs(v.x))) * 60 + 60;
+  const extentY = Math.max(...board.vertices.map((v) => Math.abs(v.y))) * 60 + 50;
+  const key = (event: React.KeyboardEvent, fn: () => void) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      fn();
+    }
+  };
+  return (
+    <div className="ct-board-shell">
+      <div className="ct-board-toolbar">
+        <span>Tap a highlighted spot to play</span>
+        <button onClick={() => setZoom(!zoom)} aria-pressed={zoom}>
+          {zoom ? 'Fit island' : 'Zoom in'}
+        </button>
+      </div>
+      <div className="ct-board-scroll">
+        <svg
+          className="ct-board"
+          style={{ minWidth: zoom ? 850 : undefined }}
+          viewBox={`${-extentX} ${-extentY} ${extentX * 2} ${extentY * 2}`}
+          aria-label="Catan island board"
+        >
+          <defs>
+            <filter id="tile-shadow">
+              <feDropShadow dx="0" dy="3" stdDeviation="3" floodOpacity=".12" />
+            </filter>
+          </defs>
+          {board.hexes.map((h) => (
+            <g
+              key={h.id}
+              role={robber && h.id !== board.robber ? 'button' : undefined}
+              tabIndex={robber && h.id !== board.robber ? 0 : undefined}
+              aria-label={`Hex ${h.id + 1}: ${h.resource}, ${h.number || 'no production'}${h.id === board.robber ? ', robber' : ''}`}
+              className={robber && h.id !== board.robber ? 'ct-hex-target' : ''}
+              onClick={() => robber && h.id !== board.robber && onHex(h.id)}
+              onKeyDown={(e) => key(e, () => robber && h.id !== board.robber && onHex(h.id))}
+            >
+              <polygon
+                points={h.vertices
+                  .map((id) => `${board.vertices[id].x * 60},${board.vertices[id].y * 60}`)
+                  .join(' ')}
+                fill={RESOURCE_COLORS[h.resource]}
+                stroke="#f5e5bd"
+                strokeWidth="3"
+                filter="url(#tile-shadow)"
+              />
+              <text x={h.x * 60} y={h.y * 60 - 29} textAnchor="middle" className="ct-terrain">
+                {h.resource}
+              </text>
+              {h.number > 0 && (
+                <>
+                  <circle cx={h.x * 60} cy={h.y * 60 + 2} r="18" fill="#fff6de" />
+                  <text
+                    x={h.x * 60}
+                    y={h.y * 60 + 8}
+                    textAnchor="middle"
+                    fill={[6, 8].includes(h.number) ? '#a93625' : '#353d36'}
+                    fontSize="19"
+                    fontWeight="700"
+                  >
+                    {h.number}
+                  </text>
+                  <text
+                    x={h.x * 60}
+                    y={h.y * 60 + 32}
+                    textAnchor="middle"
+                    fill="#fff6de"
+                    fontSize="13"
+                  >
+                    {'•'.repeat(6 - Math.abs(7 - h.number))}
+                  </text>
+                </>
+              )}
+              {board.robber === h.id && (
+                <g aria-label="Robber">
+                  <circle cx={h.x * 60 + 24} cy={h.y * 60 - 11} r="7" fill="#263a36" />
+                  <path
+                    d={`M${h.x * 60 + 19},${h.y * 60 - 5} l-5,18 h20 l-5,-18 Z`}
+                    fill="#263a36"
+                    stroke="#fdf4d9"
+                    strokeWidth="1.5"
+                  />
+                </g>
+              )}
+            </g>
+          ))}
+          {board.edges
+            .filter(
+              (e) =>
+                e.hexes.length === 1 &&
+                board.vertices[e.a].port &&
+                board.vertices[e.a].port === board.vertices[e.b].port,
+            )
+            .map((e) => {
+              const a = board.vertices[e.a],
+                b = board.vertices[e.b],
+                x = (a.x + b.x) * 30,
+                y = (a.y + b.y) * 30;
+              const norm = Math.hypot(x, y),
+                px = x + (x / norm) * 35,
+                py = y + (y / norm) * 35;
+              return (
+                <g key={`port-${e.id}`}>
+                  <path
+                    d={`M${a.x * 60},${a.y * 60} L${px},${py} L${b.x * 60},${b.y * 60}`}
+                    fill="none"
+                    stroke="#f4edd4"
+                    strokeWidth="2"
+                  />
+                  <rect x={px - 28} y={py - 10} width="56" height="20" rx="7" fill="#f4edd4" />
+                  <text x={px} y={py + 4} textAnchor="middle" fontSize="10" fill="#234d51">
+                    {a.port === 'any' ? '3:1 any' : `2:1 ${a.port}`}
+                  </text>
+                </g>
+              );
+            })}
+          {board.edges.map((e) => {
+            const a = board.vertices[e.a],
+              b = board.vertices[e.b],
+              legal = edges.includes(e.id),
+              selected = selectedEdges.includes(e.id);
+            return (
+              <g
+                key={e.id}
+                role={legal ? 'button' : undefined}
+                tabIndex={legal ? 0 : undefined}
+                aria-label={`Build road ${e.id + 1}`}
+                className={legal ? 'ct-edge-target' : ''}
+                onClick={() => legal && onEdge(e.id)}
+                onKeyDown={(event) => key(event, () => legal && onEdge(e.id))}
+              >
+                {(e.player !== undefined || selected) && (
+                  <line
+                    x1={a.x * 60}
+                    y1={a.y * 60}
+                    x2={b.x * 60}
+                    y2={b.y * 60}
+                    stroke={selected ? '#fef5dc' : PLAYER_COLORS[e.player!]}
+                    strokeWidth="9"
+                    strokeLinecap="round"
+                  />
+                )}
+                {legal && (
+                  <>
+                    <line
+                      x1={a.x * 60}
+                      y1={a.y * 60}
+                      x2={b.x * 60}
+                      y2={b.y * 60}
+                      stroke="transparent"
+                      strokeWidth="23"
+                    />
+                    <line
+                      x1={(a.x * 3 + b.x) * 15}
+                      y1={(a.y * 3 + b.y) * 15}
+                      x2={(a.x + b.x * 3) * 15}
+                      y2={(a.y + b.y * 3) * 15}
+                      stroke="#fff"
+                      strokeWidth="6"
+                      strokeLinecap="round"
+                      strokeDasharray="3 6"
+                    />
+                  </>
+                )}
+              </g>
+            );
+          })}
+          {board.vertices.map((v) => {
+            const legal = vertices.includes(v.id),
+              x = v.x * 60,
+              y = v.y * 60,
+              building = v.building;
+            return (
+              <g
+                key={v.id}
+                role={legal ? 'button' : undefined}
+                tabIndex={legal ? 0 : undefined}
+                aria-label={`${building ? 'Upgrade city' : 'Build settlement'} ${v.id + 1}`}
+                className={legal ? 'ct-vertex-target' : ''}
+                onClick={() => legal && onVertex(v.id)}
+                onKeyDown={(e) => key(e, () => legal && onVertex(v.id))}
+              >
+                {legal && (
+                  <circle cx={x} cy={y} r="12" fill="#fff9e5" stroke="#264a43" strokeWidth="2" />
+                )}
+                {building && (
+                  <path
+                    d={
+                      building.kind === 'city'
+                        ? `M${x - 11},${y + 8} v-12 l6,-6 6,6 v3 h8 v9 Z`
+                        : `M${x - 8},${y + 7} v-10 l8,-7 8,7 v10 Z`
+                    }
+                    fill={PLAYER_COLORS[building.player]}
+                    stroke="#fff4d9"
+                    strokeWidth="2"
+                  />
+                )}
+                {legal && !building && (
+                  <text x={x} y={y + 5} textAnchor="middle" fontSize="15" fill="#264a43">
+                    +
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
