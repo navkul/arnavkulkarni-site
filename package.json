@@ -15,7 +15,9 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:unavailable": "E2E_STRAVA_MODE=unavailable playwright test",
-    "test:catan": "node --experimental-strip-types --test tests/catan/*.test.ts"
+    "test:catan": "node --experimental-strip-types --test tests/catan/*.test.ts",
+    "test:catan:browser": "playwright test --config playwright.catan.config.ts",
+    "dev:lan": "next dev --hostname 0.0.0.0"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",
