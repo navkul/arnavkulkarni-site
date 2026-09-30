@@ -81,3 +81,15 @@ Operational limits are documented in `docs/catan.md`: small-game write throughpu
 queue beta status, guest cookie retention, no password recovery, and experimental
 Monte Carlo estimates. Hosted provisioning/deployment requires Neon marketplace
 terms acceptance; deployment verification is tracked separately from local tests.
+
+### Migration verification — 2026-09-30
+
+- 38 rules/service tests passed against Postgres, including independent-connection races.
+- Four Catan browser tests passed against a production build and isolated Postgres.
+- 22 existing site browser tests and two Strava-outage tests passed after incorporating
+  the latest `main` dependency changes.
+- Typecheck, lint, changed-file formatting and dependency audit passed.
+- A Vercel preview connected three independent sessions, started a game, accepted a
+  legal placement and completed both immutable snapshots through the hosted queue.
+  The test removed only its own room, jobs and sessions afterward.
+- GitHub CI now provisions isolated Postgres and runs both Catan suites.
