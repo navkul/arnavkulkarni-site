@@ -1,4 +1,5 @@
-import { DatabaseSync } from 'node:sqlite';
+import { Pool, type PoolClient } from 'pg';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   randomBytes,
   randomInt,
@@ -6,8 +7,6 @@ import {
   scrypt as scryptCallback,
   timingSafeEqual,
 } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { applyAction, RuleError, score } from './engine.ts';
 import { type Action, type Game, type PlayerMetrics } from './types.ts';
@@ -109,42 +108,99 @@ export function cleanName(name: unknown) {
   return normalized;
 }
 export class CatanStore {
-  db: DatabaseSync;
-  constructor(path: string) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
-      CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, password TEXT NOT NULL, created INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, guest TEXT NOT NULL, profile TEXT REFERENCES profiles(id), expires INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS rooms (code TEXT PRIMARY KEY, state TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS results (room TEXT NOT NULL, seat TEXT NOT NULL, profile TEXT REFERENCES profiles(id), guest TEXT NOT NULL, points INTEGER NOT NULL, won INTEGER NOT NULL, players INTEGER NOT NULL, turns INTEGER NOT NULL, finished INTEGER NOT NULL, metrics TEXT NOT NULL, PRIMARY KEY(room,seat));
-      CREATE INDEX IF NOT EXISTS results_profile ON results(profile);
-      CREATE INDEX IF NOT EXISTS results_guest ON results(guest);
-      CREATE TABLE IF NOT EXISTS odds_history (room TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(room,revision));
-      CREATE TABLE IF NOT EXISTS limits (key TEXT PRIMARY KEY, start INTEGER NOT NULL, count INTEGER NOT NULL);
-    `);
+  readonly pool: Pool;
+  private readonly context = new AsyncLocalStorage<PoolClient>();
+  private readonly ready: Promise<void>;
+  constructor(url: string) {
+    this.pool = new Pool({
+      connectionString: url,
+      max: 5,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 10_000,
+    });
+    this.ready = this.initialize();
   }
-  private get<T>(sql: string, ...params: (string | number | null)[]): T | undefined {
-    return this.db.prepare(sql).get(...params) as T | undefined;
-  }
-  private all<T>(sql: string, ...params: (string | number | null)[]): T[] {
-    return this.db.prepare(sql).all(...params) as T[];
-  }
-  transaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
+  private async initialize() {
+    const client = await this.pool.connect();
     try {
-      const result = fn();
-      this.db.exec('COMMIT');
-      return result;
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(739214, 0)');
+      await client.query(`
+        CREATE SCHEMA IF NOT EXISTS catan;
+        CREATE TABLE IF NOT EXISTS catan.profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, password TEXT NOT NULL, created BIGINT NOT NULL);
+        CREATE TABLE IF NOT EXISTS catan.sessions (hash TEXT PRIMARY KEY, guest TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), expires BIGINT NOT NULL);
+        CREATE TABLE IF NOT EXISTS catan.rooms (code TEXT PRIMARY KEY, state TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS catan.results (room TEXT NOT NULL, seat TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), guest TEXT NOT NULL, points INTEGER NOT NULL, won INTEGER NOT NULL, players INTEGER NOT NULL, turns INTEGER NOT NULL, finished BIGINT NOT NULL, metrics TEXT NOT NULL, PRIMARY KEY(room,seat));
+        CREATE INDEX IF NOT EXISTS results_profile ON catan.results(profile);
+        CREATE INDEX IF NOT EXISTS results_guest ON catan.results(guest);
+        CREATE TABLE IF NOT EXISTS catan.odds_history (room TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(room,revision));
+        CREATE TABLE IF NOT EXISTS catan.limits (key TEXT PRIMARY KEY, start BIGINT NOT NULL, count INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS catan.jobs (room TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, published BIGINT NOT NULL DEFAULT 0, completed BOOLEAN NOT NULL DEFAULT FALSE, PRIMARY KEY(room,revision));
+      `);
+      await client.query('COMMIT');
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      await client.query('ROLLBACK');
       throw error;
+    } finally {
+      client.release();
     }
   }
-  rateLimit(key: string, maximum: number, window = 60_000) {
-    this.transaction(() => {
+  async close() {
+    await this.ready;
+    await this.pool.end();
+  }
+  async query(sql: string, ...params: (string | number | null)[]) {
+    await this.ready;
+    let index = 0;
+    const text = sql
+      .replace(/\?/g, () => `$${++index}`)
+      .replace(
+        /\b(FROM|INTO|UPDATE|JOIN) (profiles|sessions|rooms|results|odds_history|limits|jobs)\b/g,
+        '$1 catan.$2',
+      );
+    const result = await (this.context.getStore() ?? this.pool).query(text, params);
+    // PostgreSQL returns BIGINT and NUMERIC as strings; all these values are bounded counts/timestamps.
+    return result.rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [
+          key,
+          result.fields.some((f) => f.name === key && [20, 1700].includes(f.dataTypeID)) &&
+          value !== null
+            ? Number(value)
+            : value,
+        ]),
+      ),
+    );
+  }
+  private async get<T>(sql: string, ...params: (string | number | null)[]): Promise<T | undefined> {
+    return (await this.query(sql, ...params))[0] as T | undefined;
+  }
+  private async all<T>(sql: string, ...params: (string | number | null)[]): Promise<T[]> {
+    return (await this.query(sql, ...params)) as T[];
+  }
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    await this.ready;
+    if (this.context.getStore()) return fn();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Short writes are serialized across instances, including profile claims and room creation.
+      // Simulations and password hashing always run outside this transaction.
+      await client.query('SELECT pg_advisory_xact_lock(739214, 1)');
+      const result = await this.context.run(client, fn);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async rateLimit(key: string, maximum: number, window = 60_000) {
+    return this.transaction(async () => {
       const now = Date.now();
-      const row = this.get<{ start: number; count: number }>(
+      const row = await this.get<{ start: number; count: number }>(
         'SELECT start,count FROM limits WHERE key=?',
         key,
       );
@@ -154,14 +210,18 @@ export class CatanStore {
         429,
       );
       if (!row || row.start + window <= now)
-        this.db.prepare('INSERT OR REPLACE INTO limits VALUES(?,?,1)').run(key, now);
-      else this.db.prepare('UPDATE limits SET count=count+1 WHERE key=?').run(key);
-      this.db.prepare('DELETE FROM limits WHERE start<?').run(now - 86400_000);
+        await this.query(
+          'INSERT INTO limits VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET start=EXCLUDED.start,count=1',
+          key,
+          now,
+        );
+      else await this.query('UPDATE limits SET count=count+1 WHERE key=?', key);
+      await this.query('DELETE FROM limits WHERE start<?', now - 86400_000);
     });
   }
-  session(secret?: string): { identity: Identity; secret?: string } {
+  async session(secret?: string): Promise<{ identity: Identity; secret?: string }> {
     if (secret && secret.length <= 128) {
-      const row = this.get<{ guest: string; profile: string | null; name: string | null }>(
+      const row = await this.get<{ guest: string; profile: string | null; name: string | null }>(
         `SELECT s.guest,s.profile,p.name FROM sessions s LEFT JOIN profiles p ON s.profile=p.id WHERE s.hash=? AND s.expires>?`,
         hash(secret),
         Date.now(),
@@ -178,50 +238,68 @@ export class CatanStore {
     }
     const fresh = token();
     const guest = token();
-    this.db
-      .prepare('INSERT INTO sessions VALUES(?,?,NULL,?)')
-      .run(hash(fresh), guest, Date.now() + 30 * 86400_000);
-    this.db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
+    await this.query(
+      'INSERT INTO sessions VALUES(?,?,NULL,?)',
+      hash(fresh),
+      guest,
+      Date.now() + 30 * 86400_000,
+    );
+    await this.query('DELETE FROM sessions WHERE expires<?', Date.now());
     return { identity: { sessionHash: hash(fresh), guestId: guest }, secret: fresh };
   }
-  private rotate(identity: Identity, profileId?: string) {
+  private async rotate(identity: Identity, profileId?: string) {
     const secret = token();
-    this.db.prepare('DELETE FROM sessions WHERE hash=?').run(identity.sessionHash);
-    this.db
-      .prepare('INSERT INTO sessions VALUES(?,?,?,?)')
-      .run(hash(secret), identity.guestId, profileId ?? null, Date.now() + 30 * 86400_000);
+    await this.query('DELETE FROM sessions WHERE hash=?', identity.sessionHash);
+    await this.query(
+      'INSERT INTO sessions VALUES(?,?,?,?)',
+      hash(secret),
+      identity.guestId,
+      profileId ?? null,
+      Date.now() + 30 * 86400_000,
+    );
     return secret;
   }
-  canRegister(identity: Identity) {
+  async canRegister(identity: Identity) {
     return (
       !identity.profileId &&
-      !!this.get(
+      !!(await this.get(
         'SELECT 1 FROM results WHERE guest=? AND profile IS NULL LIMIT 1',
         identity.guestId,
-      )
+      ))
     );
   }
   async register(identity: Identity, name: unknown, password: string) {
     check(!identity.profileId, 'You are already signed in.');
-    check(this.canRegister(identity), 'Complete your first game to create a profile.');
+    check(await this.canRegister(identity), 'Complete your first game to create a profile.');
     const cleaned = cleanName(name);
-    this.rateLimit(`register:${identity.guestId}`, 5, 3600_000);
+    await this.rateLimit(`register:${identity.guestId}`, 5, 3600_000);
     const encoded = await passwordHash(password);
-    return this.transaction(() => {
-      check(this.canRegister(identity), 'Your completed games have already been claimed.', 409);
+    return this.transaction(async () => {
       check(
-        !this.get('SELECT 1 FROM profiles WHERE name_key=?', cleaned.toLowerCase()),
+        await this.canRegister(identity),
+        'Your completed games have already been claimed.',
+        409,
+      );
+      check(
+        !(await this.get('SELECT 1 FROM profiles WHERE name_key=?', cleaned.toLowerCase())),
         'That profile name is already taken.',
         409,
       );
       const id = token();
-      this.db
-        .prepare('INSERT INTO profiles VALUES(?,?,?,?,?)')
-        .run(id, cleaned, cleaned.toLowerCase(), encoded, Date.now());
-      this.db
-        .prepare('UPDATE results SET profile=? WHERE guest=? AND profile IS NULL')
-        .run(id, identity.guestId);
-      for (const room of this.rooms()) {
+      await this.query(
+        'INSERT INTO profiles VALUES(?,?,?,?,?)',
+        id,
+        cleaned,
+        cleaned.toLowerCase(),
+        encoded,
+        Date.now(),
+      );
+      await this.query(
+        'UPDATE results SET profile=? WHERE guest=? AND profile IS NULL',
+        id,
+        identity.guestId,
+      );
+      for (const room of await this.rooms()) {
         let changed = false;
         room.seats.forEach((seat) => {
           if (!seat.profileId && seat.guestId === identity.guestId) {
@@ -237,16 +315,16 @@ export class CatanStore {
         });
         if (changed) {
           room.revision++;
-          this.save(room);
+          await this.save(room);
         }
       }
-      return this.rotate(identity, id);
+      return await this.rotate(identity, id);
     });
   }
   async login(identity: Identity, name: unknown, password: string) {
     const cleaned = cleanName(name);
-    this.rateLimit(`login:${cleaned.toLowerCase()}`, 10, 15 * 60_000);
-    const profile = this.get<ProfileRow>(
+    await this.rateLimit(`login:${cleaned.toLowerCase()}`, 10, 15 * 60_000);
+    const profile = await this.get<ProfileRow>(
       'SELECT * FROM profiles WHERE name_key=?',
       cleaned.toLowerCase(),
     );
@@ -256,36 +334,50 @@ export class CatanStore {
       profile?.password ?? `${'0'.repeat(32)}:${'0'.repeat(128)}`,
     );
     check(profile && valid, 'Incorrect name or password.', 401);
-    return this.transaction(() => this.rotate(identity, profile.id));
+    return this.transaction(async () => await this.rotate(identity, profile.id));
   }
   logout(identity: Identity) {
-    return this.transaction(() => this.rotate(identity));
+    return this.transaction(async () => await this.rotate(identity));
   }
-  room(code: string): Room {
+  async room(code: string): Promise<Room> {
     check(typeof code === 'string' && /^[A-Z2-9]{6}$/.test(code), 'Invalid room code.', 404);
-    const row = this.get<{ state: string }>('SELECT state FROM rooms WHERE code=?', code);
+    const row = await this.get<{ state: string }>('SELECT state FROM rooms WHERE code=?', code);
     check(row, 'Room not found.', 404);
     return JSON.parse(row.state) as Room;
   }
-  rooms(): Room[] {
-    return this.all<{ state: string }>('SELECT state FROM rooms').map((row) =>
+  async rooms(): Promise<Room[]> {
+    return (await this.all<{ state: string }>('SELECT state FROM rooms')).map((row) =>
       JSON.parse(row.state),
     );
   }
-  private save(room: Room) {
+  private async save(room: Room) {
     room.updatedAt = Date.now();
-    this.db
-      .prepare('INSERT OR REPLACE INTO rooms VALUES(?,?)')
-      .run(room.code, JSON.stringify(room));
+    await this.query(
+      'INSERT INTO rooms VALUES(?,?) ON CONFLICT(code) DO UPDATE SET state=EXCLUDED.state',
+      room.code,
+      JSON.stringify(room),
+    );
+    if (room.game)
+      await this.query(
+        'INSERT INTO jobs(room,revision,snapshot) VALUES(?,?,?) ON CONFLICT(room,revision) DO NOTHING',
+        room.code,
+        room.revision,
+        JSON.stringify(room.game),
+      );
   }
-  createRoom(identity: Identity, name: unknown, capacity: number, guestName: unknown): Room {
+  async createRoom(
+    identity: Identity,
+    name: unknown,
+    capacity: number,
+    guestName: unknown,
+  ): Promise<Room> {
     check(capacity === 4 || capacity === 6, 'Choose the 3–4 or 5–6 player board.');
     const title = cleanName(name);
     const playerName = identity.name ?? cleanName(guestName);
-    this.rateLimit(`create:${identity.guestId}`, 10, 3600_000);
-    return this.transaction(() => {
+    await this.rateLimit(`create:${identity.guestId}`, 10, 3600_000);
+    return this.transaction(async () => {
       check(
-        this.rooms().filter(
+        (await this.rooms()).filter(
           (r) => r.status !== 'finished' && r.seats.some((s) => owns(identity, s)),
         ).length < 10,
         'You already have ten open rooms.',
@@ -296,7 +388,7 @@ export class CatanStore {
           { length: 6 },
           () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[randomInt(32)],
         ).join('');
-      } while (this.get('SELECT 1 FROM rooms WHERE code=?', code));
+      } while (await this.get('SELECT 1 FROM rooms WHERE code=?', code));
       const seat = {
         id: token(),
         name: playerName,
@@ -314,13 +406,13 @@ export class CatanStore {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      this.save(room);
+      await this.save(room);
       return room;
     });
   }
-  join(identity: Identity, code: string, name: unknown): Room {
-    return this.transaction(() => {
-      const room = this.room(code);
+  async join(identity: Identity, code: string, name: unknown): Promise<Room> {
+    return this.transaction(async () => {
+      const room = await this.room(code);
       if (room.seats.some((s) => owns(identity, s))) return room;
       check(room.status === 'lobby', 'This game has already started.');
       check(room.seats.length < room.capacity, 'This room is full.');
@@ -336,19 +428,19 @@ export class CatanStore {
         profileId: identity.profileId,
       });
       room.revision++;
-      this.save(room);
+      await this.save(room);
       return room;
     });
   }
-  change(
+  async change(
     identity: Identity,
     code: string,
     revision: number,
     command: 'start' | 'pause' | 'resume' | 'leave' | 'action',
     action?: Action,
-  ): Room | undefined {
-    return this.transaction(() => {
-      const room = this.room(code);
+  ): Promise<Room | undefined> {
+    return this.transaction(async () => {
+      const room = await this.room(code);
       const seat = room.seats.find((s) => owns(identity, s));
       check(seat, 'You do not have a seat in this room.', 403);
       check(
@@ -386,7 +478,7 @@ export class CatanStore {
         check(room.status === 'lobby', 'You can only leave before the game starts.');
         room.seats = room.seats.filter((s) => s.id !== seat.id);
         if (!room.seats.length) {
-          this.db.prepare('DELETE FROM rooms WHERE code=?').run(code);
+          await this.query('DELETE FROM rooms WHERE code=?', code);
           return undefined;
         }
         if (room.host === seat.id) room.host = room.seats[0].id;
@@ -402,57 +494,132 @@ export class CatanStore {
         if (room.game.winner !== undefined) {
           room.status = 'finished';
           room.finishedAt = Date.now();
-          this.recordResults(room);
+          await this.recordResults(room);
         }
       } else throw new ServiceError('Unknown room command.');
       room.revision++;
-      this.save(room);
+      await this.save(room);
       return room;
     });
   }
-  private recordResults(room: Room) {
+  private async recordResults(room: Room) {
     const game = room.game!;
-    game.players.forEach((p, i) => {
+    for (const [i, p] of game.players.entries()) {
       const seat = room.seats.find((s) => s.id === p.id)!;
-      this.db
-        .prepare('INSERT OR IGNORE INTO results VALUES(?,?,?,?,?,?,?,?,?,?)')
-        .run(
-          room.code,
-          seat.id,
-          seat.profileId ?? null,
-          seat.guestId,
-          score(game, i),
-          Number(game.winner === i),
-          game.players.length,
-          game.turn,
-          room.finishedAt!,
-          JSON.stringify(p.metrics),
+      await this.query(
+        'INSERT INTO results VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(room,seat) DO NOTHING',
+        room.code,
+        seat.id,
+        seat.profileId ?? null,
+        seat.guestId,
+        score(game, i),
+        Number(game.winner === i),
+        game.players.length,
+        game.turn,
+        room.finishedAt!,
+        JSON.stringify(p.metrics),
+      );
+    }
+  }
+  async pendingJobs(code?: string) {
+    return this.transaction(async () => {
+      const now = Date.now();
+      const jobs = await this.all<{ room: string; revision: number }>(
+        `SELECT room,revision FROM jobs WHERE completed=FALSE AND published<? ${code ? 'AND room=?' : ''} ORDER BY revision LIMIT 20`,
+        now - 600_000,
+        ...(code ? [code] : []),
+      );
+      for (const job of jobs)
+        await this.query(
+          'UPDATE jobs SET published=? WHERE room=? AND revision=?',
+          now,
+          job.room,
+          job.revision,
         );
+      return jobs;
     });
   }
-  saveOdds(code: string, odds: Odds) {
-    this.transaction(() => {
-      const room = this.room(code);
-      // Preserve every evaluated action, even when a newer move arrives mid-evaluation.
-      this.db
-        .prepare('INSERT OR REPLACE INTO odds_history VALUES(?,?,?)')
-        .run(code, odds.revision, JSON.stringify(odds));
-      if (!room.odds || odds.revision > room.odds.revision) {
-        room.odds = odds;
-        this.save(room);
-      }
-    });
-  }
-  oddsHistory(code: string): Odds[] {
-    return this.all<{ data: string }>(
-      'SELECT data FROM odds_history WHERE room=? ORDER BY revision DESC LIMIT 100',
+  async retryJob(code: string, revision: number) {
+    await this.query(
+      'UPDATE jobs SET published=0 WHERE room=? AND revision=? AND completed=FALSE',
       code,
+      revision,
+    );
+  }
+  async job(code: string, revision: number): Promise<Game | undefined> {
+    const row = await this.get<{ snapshot: string }>(
+      'SELECT snapshot FROM jobs WHERE room=? AND revision=? AND completed=FALSE',
+      code,
+      revision,
+    );
+    return row ? (JSON.parse(row.snapshot) as Game) : undefined;
+  }
+  async saveOdds(code: string, odds: Odds) {
+    return this.transaction(async () => {
+      if (
+        await this.get(
+          'SELECT 1 FROM odds_history WHERE room=? AND revision=?',
+          code,
+          odds.revision,
+        )
+      )
+        return;
+      const room = await this.room(code);
+      const prior = await this.get<{ data: string }>(
+        'SELECT data FROM odds_history WHERE room=? AND revision<? ORDER BY revision DESC LIMIT 1',
+        code,
+        odds.revision,
+      );
+      const previous = prior ? (JSON.parse(prior.data) as Odds) : undefined;
+      odds = {
+        ...odds,
+        delta: odds.probabilities.map((p, i) => p - (previous?.probabilities[i] ?? p)),
+      };
+      await this.query(
+        'INSERT INTO odds_history VALUES(?,?,?)',
+        code,
+        odds.revision,
+        JSON.stringify(odds),
+      );
+      // Queue delivery may be out of order. Repair the following estimate's delta as well.
+      const next = await this.get<{ data: string }>(
+        'SELECT data FROM odds_history WHERE room=? AND revision>? ORDER BY revision LIMIT 1',
+        code,
+        odds.revision,
+      );
+      if (next) {
+        const following = JSON.parse(next.data) as Odds;
+        following.delta = following.probabilities.map((p, i) => p - odds.probabilities[i]);
+        await this.query(
+          'UPDATE odds_history SET data=? WHERE room=? AND revision=?',
+          JSON.stringify(following),
+          code,
+          following.revision,
+        );
+        if (room.odds?.revision === following.revision) room.odds = following;
+      }
+      if (!room.odds || odds.revision > room.odds.revision) room.odds = odds;
+      await this.save(room);
+      // Keep completion receipts for deduplication; discard bulky snapshots once evaluated.
+      await this.query(
+        "UPDATE jobs SET completed=TRUE,snapshot='' WHERE room=? AND revision=?",
+        code,
+        odds.revision,
+      );
+    });
+  }
+  async oddsHistory(code: string): Promise<Odds[]> {
+    return (
+      await this.all<{ data: string }>(
+        'SELECT data FROM odds_history WHERE room=? ORDER BY revision DESC LIMIT 100',
+        code,
+      )
     )
       .reverse()
       .map((r) => JSON.parse(r.data));
   }
-  leaderboard() {
-    const rows = this.all<{
+  async leaderboard() {
+    const rows = await this.all<{
       name: string;
       games: number;
       wins: number;
@@ -460,19 +627,19 @@ export class CatanStore {
       averagePoints: number;
       winRate: number;
     }>(
-      `SELECT p.name,COUNT(*) games,SUM(r.won) wins,SUM(r.points) points,ROUND(AVG(r.points),2) averagePoints,ROUND(100.0*SUM(r.won)/COUNT(*),1) winRate FROM results r JOIN profiles p ON r.profile=p.id GROUP BY p.id ORDER BY winRate DESC,games DESC,averagePoints DESC LIMIT 100`,
+      `SELECT p.name,COUNT(*) games,SUM(r.won) wins,SUM(r.points) points,ROUND(AVG(r.points),2) "averagePoints",ROUND(100.0*SUM(r.won)/COUNT(*),1) "winRate" FROM results r JOIN profiles p ON r.profile=p.id GROUP BY p.id ORDER BY "winRate" DESC,games DESC,"averagePoints" DESC LIMIT 100`,
     );
-    const anonymous = this.get<{ appearances: number; wins: number }>(
+    const anonymous = await this.get<{ appearances: number; wins: number }>(
       'SELECT COUNT(*) appearances,COALESCE(SUM(won),0) wins FROM results WHERE profile IS NULL',
     )!;
-    const totals = this.get<{ games: number; appearances: number }>(
+    const totals = await this.get<{ games: number; appearances: number }>(
       'SELECT COUNT(DISTINCT room) games,COUNT(*) appearances FROM results',
     )!;
-    return { rows, anonymous, totals };
+    return { rows, anonymous: anonymous!, totals: totals! };
   }
-  profile(identity: Identity) {
+  async profile(identity: Identity) {
     check(identity.profileId, 'Sign in to see personal statistics.', 401);
-    const results = this.all<ResultRow>(
+    const results = await this.all<ResultRow>(
       'SELECT * FROM results WHERE profile=? ORDER BY finished DESC',
       identity.profileId,
     );
@@ -480,26 +647,28 @@ export class CatanStore {
       wins = results.reduce((n, r) => n + r.won, 0);
     const metrics = results.map((r) => JSON.parse(r.metrics) as PlayerMetrics);
     const sum = (fn: (m: PlayerMetrics) => number) => metrics.reduce((n, m) => n + fn(m), 0);
-    const history = results.map((r) => {
-      const opponents = this.all<{ name: string | null; points: number; won: number }>(
-        'SELECT p.name,r.points,r.won FROM results r LEFT JOIN profiles p ON r.profile=p.id WHERE r.room=? AND r.seat<>?',
-        r.room,
-        r.seat,
-      );
-      return {
-        room: r.room,
-        points: r.points,
-        won: !!r.won,
-        players: r.players,
-        turns: r.turns,
-        finished: r.finished,
-        opponents: opponents.map((o) => ({
-          name: o.name ?? 'Anonymous',
-          points: o.points,
-          won: !!o.won,
-        })),
-      };
-    });
+    const history = await Promise.all(
+      results.map(async (r) => {
+        const opponents = await this.all<{ name: string | null; points: number; won: number }>(
+          'SELECT p.name,r.points,r.won FROM results r LEFT JOIN profiles p ON r.profile=p.id WHERE r.room=? AND r.seat<>?',
+          r.room,
+          r.seat,
+        );
+        return {
+          room: r.room,
+          points: r.points,
+          won: !!r.won,
+          players: r.players,
+          turns: r.turns,
+          finished: r.finished,
+          opponents: opponents.map((o) => ({
+            name: o.name ?? 'Anonymous',
+            points: o.points,
+            won: !!o.won,
+          })),
+        };
+      }),
+    );
     return {
       name: identity.name,
       games,

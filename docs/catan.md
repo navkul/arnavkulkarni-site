@@ -4,37 +4,48 @@ Open `/catan` from the website navigation. Create a table for **3–4 players** 
 **5–6 players**, share the six-character room code, and have each player use their
 own browser/device. The host starts once the minimum number of seats is filled.
 
-## Running on your Wi-Fi
+## Hosting on Vercel
 
-Requires Node **22.13+** (the repository targets Node 22) with its built-in SQLite
-module. Use the normal dependency installation for this repository, then:
+Deploy this Next.js project to Vercel and open `/catan` on the public domain. Players
+can join from any internet connection; the host's computer does not need to stay on.
+
+1. Connect a hosted Postgres database (for example Neon through Vercel Marketplace).
+   Set `CATAN_DATABASE_URL` to its pooled connection URL in the intended deployment
+   environments. Use a separate database for previews when testing with fixtures.
+2. Deploy the project with the checked-in `vercel.json`. It registers the
+   `catan-evaluations` queue consumer at `/api/catan/evaluate`.
+3. On first database access the app creates only its own `catan` schema and tables,
+   under a migration lock. Existing website tables are untouched.
+4. Verify room creation/joining from independent browsers and wait for a started
+   game's probability estimate. Inspect Vercel function logs if jobs are delayed.
+
+Vercel Queues is currently a beta service. Its SDK uses deployment credentials;
+there is no public endpoint accepting arbitrary simulation state. A queue failure
+never rolls back a player's accepted move. Pending jobs survive redeployment and
+are redispatched when the table is opened or polled (after a ten-minute retry window).
+
+## Local development and Wi-Fi
+
+Use Node 22, install dependencies, and set `CATAN_DATABASE_URL` in `.env.local` to
+a development Postgres database. Then run `npm run dev:lan`, or build and start:
 
 ```sh
 npm run build
 npm run start -- --hostname 0.0.0.0
 ```
 
-On the host, open `http://localhost:3000/catan`. On other devices connected to the
-same Wi-Fi, open `http://HOST_LAN_IP:3000/catan`. For example,
-`http://192.168.1.20:3000/catan`. On macOS, `ipconfig getifaddr en0` usually shows
-the Wi-Fi address. Allow incoming connections for Node in the host firewall.
-Guest Wi-Fi networks with client isolation cannot connect devices to each other.
-For development, use `npm run dev:lan`.
-
-Everyone must use the same server address to share rooms and profiles. A browser
-opened through localhost and the same browser opened through a LAN IP use distinct
-cookies. For remote website hosting, use one persistent Node process with durable
-disk and HTTPS behind your usual reverse proxy. This implementation is **not an
-ephemeral serverless deployment**; no external deployment is performed by these
-changes. If the existing site is on Vercel, host this Next application on a durable
-Node host (or migrate the storage/room service to a shared persistent backend).
+Open `http://localhost:3000/catan` locally or `http://HOST_LAN_IP:3000/catan` on
+another device. Everyone must use the same server address. The local server evaluates
+persisted jobs directly; Vercel deployments send them to the queue instead.
 
 ## Storage and identity
 
-- SQLite defaults to `.data/catan.sqlite`. Set `CATAN_DATABASE_PATH` to an absolute
-  file path on a persistent volume to override it. Keep it outside `public/`.
-- Room actions, final results and revisions commit atomically. WAL mode and
-  revision checks prevent a stale browser from overwriting another move.
+- PostgreSQL stores rooms, sessions, profiles, results, probability history, and
+  evaluation jobs. `CATAN_DATABASE_URL` is server-only; never prefix it with `NEXT_PUBLIC_`.
+- Room actions, final results, revisions and evaluation snapshots commit atomically.
+  A PostgreSQL advisory transaction lock serializes short writes across instances;
+  revision checks reject stale moves. Simulations run outside the write transaction.
+  This intentionally favors correctness for small game nights over high write throughput.
 - Game state persists after every accepted move, including an in-progress discard
   or robber phase. Restarting the server does not require restarting the game.
 - Session cookies are HTTP-only, SameSite=Lax, and Secure when served over HTTPS.
@@ -46,8 +57,8 @@ Node host (or migrate the storage/room service to a shared persistent backend).
   games, guests retain their seats through the same browser cookie. Guests should
   keep that cookie until they have created a profile or finished playing.
 - There is no password recovery flow or email collection. Keep your password.
-- Back up SQLite with its online backup facilities, or stop the host and copy the
-  database together with any WAL/SHM files. Do not delete `.data` during deploys.
+- Configure backups/retention with the Postgres provider. The former local SQLite
+  files are not imported automatically and are left untouched by this migration.
 
 ## Rules and controls
 
@@ -97,8 +108,10 @@ or the future deck.
 By default, each evaluation runs **32 simulations** with a **1,200-action horizon**.
 Set `CATAN_SIMULATION_SAMPLES` between 8 and 256 to trade server time for lower
 sampling variance. Evaluations yield during rollouts so requests can be served.
-They run in move order and may trail rapid moves; the UI explicitly shows when an
-estimate is still updating. The latest state can be reevaluated after a restart.
+Queue deliveries can complete out of order and may trail rapid moves. Every move
+has an immutable snapshot; retries are idempotent. Stored deltas are repaired against
+the preceding evaluated revision, while the current estimate never moves backward.
+The UI explicitly shows when an estimate is still updating.
 
 A half-win prior per player smooths finite samples, so a nonterminal position does
 not claim a certain winner or an impossible win from a handful of rollouts.
@@ -111,7 +124,12 @@ small deltas can be sampling noise. Finished games show the actual 100% winner.
 
 ## Verification
 
+Tests require an isolated database named `catan_test`. For example:
+
 ```sh
+docker run --name catan-postgres-tests -e POSTGRES_PASSWORD=catan-local-test \
+  -e POSTGRES_DB=catan_test -p 127.0.0.1:55439:5432 -d postgres:17-alpine
+export CATAN_TEST_DATABASE_URL='postgresql://postgres:catan-local-test@127.0.0.1:55439/catan_test'
 npm run test:catan          # Rules, simulations, identities, persistence and privacy
 npm run test:catan:browser  # Production build + independent Chromium sessions
 npm run typecheck
@@ -119,6 +137,7 @@ npm run lint
 npm run build
 ```
 
-Browser tests use an isolated `.data/catan-e2e.sqlite` and port 3210. Their runner
-clears only that test database. Screenshots/traces are in `test-results/catan`.
+Service and browser tests clear the `catan` tables in `CATAN_TEST_DATABASE_URL`.
+The guard requires the database name `catan_test`; never point it at real user data.
+Run those suites sequentially. Browser tests use port 3210. Screenshots/traces are in `test-results/catan`.
 The preexisting site browser tests remain available through `npm run test:e2e`.

@@ -4,7 +4,7 @@ Worktree: `../arnavkulkarni-site-catan`, branch `feat/catan`.
 
 ## Scope
 
-- Website entry at `/catan`, accessible to multiple devices through one LAN server.
+- Website entry at `/catan`, with shared Postgres storage for internet and LAN players.
 - Rooms with invite codes, private per-seat hands, reconnects, 3–4 and 5–6 players.
 - Full base game: randomized island, ports, snake setup, production/bank shortages,
   robber/discards/theft, builds, domestic/maritime trade, all development cards,
@@ -28,20 +28,20 @@ Worktree: `../arnavkulkarni-site-catan`, branch `feat/catan`.
 
 ## Decisions
 
-Use a single Node server with SQLite on persistent local storage. This supports a
-LAN host and a persistent website host; ephemeral/serverless replicas require a
-shared backend and are not a supported deployment. All game actions are validated
-and committed atomically with revision checks. Clients never receive other hands,
-future deck order, authentication secrets or simulation internals.
+Use Vercel for the website and API, hosted Postgres for shared state, and Vercel
+Queues for durable simulation dispatch. Each move and its immutable job snapshot
+commit in one transaction. Short writes are serialized across instances; expensive
+simulations run outside transactions. Duplicate/out-of-order results are safe.
+Clients never receive other hands, future deck order or authentication secrets.
 
 Rules references: [base game](https://www.catan.com/understand-catan/game-rules),
 [paired turns](https://www.catan.com/sites/default/files/2021-09/CATAN_New5-6Player_ruleEN.pdf).
 Use original CSS/SVG artwork, no copied game assets.
 
-## Completion audit — 2026-09-30
+## Original LAN implementation audit — 2026-09-30
 
-The implementation is complete in this worktree. It has not been deployed to an
-external host. The local production preview runs on port 3211.
+The following records the original LAN version before the Vercel migration.
+Current deployment instructions are in `docs/catan.md`.
 
 | Requirement                                              | Authoritative evidence                                                                                                                                                                                                                                                               |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -51,9 +51,9 @@ external host. The local production preview runs on port 3211.
 | Full base-game actions                                   | Rules tests cover placement/distance, roads/cities/costs/limits, dice/production/shortages, discards/robber/theft, ports, domestic offers/consent, every development card, awards/ties/interruption and hidden-point victory; controls route all actions to the authoritative engine |
 | Post-first-game name/password profile                    | Browser performs winning city action, creates profile and sees saved win; service tests reject premature registration and duplicate names, check salted password storage and session rotation                                                                                        |
 | Future login and personal stats                          | Fresh browser login restores account; browser renders personal game history; service tests confirm game-count/win-count/history values and persisted results                                                                                                                         |
-| Automatic leaderboard results                            | Winning action and result inserts share one SQLite transaction; duplicate result keys; browser confirms 100% win rate for its new profile                                                                                                                                            |
+| Automatic leaderboard results                            | Winning action and result inserts share one database transaction; duplicate result keys; browser confirms 100% win rate for its new profile                                                                                                                                          |
 | Anonymous opponents still count                          | Service tests verify anonymous aggregate appearances/wins, own-result claiming and private history; browser/API check excludes guest display names from profile history                                                                                                              |
-| Profile pause/resume and later recovery                  | Browser pauses and resumes from a fresh authenticated context; service closes/reopens SQLite, logs in, resumes and compares the unchanged game snapshot                                                                                                                              |
+| Profile pause/resume and later recovery                  | Browser pauses and resumes from a fresh authenticated context; service reconnects to storage, logs in, resumes and compares the unchanged game snapshot                                                                                                                              |
 | Server full-information win probability and move changes | Actual rollouts use the same rules engine and complete games; evaluation tests verify normalized deterministic probabilities, revision/delta/terminal behavior and nonmutation; browser confirms published odds; SVG history and delta panel visually inspected                      |
 | Hidden state and action authority                        | Private projections tested for every seat and outsider; route denies outside observers and cross-site writes; stale revisions, wrong actor/host, unconsented trades and malformed actions tested                                                                                     |
 | Mobile and existing website                              | Desktop game, mobile lobby and mobile game screenshots visually inspected; phone overflow assertions; 22 existing website Playwright tests pass                                                                                                                                      |
@@ -70,8 +70,14 @@ Final verification:
   removed its own verification lobby. Physical second-device Wi-Fi/firewall
   configuration remains host-environment dependent.
 
-Operational boundaries are documented in `docs/catan.md`: persistent Node/SQLite
-hosting, guest cookie retention, no password recovery, and experimental Monte Carlo
-estimates rather than solved/calibrated human odds. Simulations model bank trading
-and building policy, not human negotiations. The GUI reports evaluation lag and
-horizon truncation. These are explicit operating/model limits, not hidden claims.
+## Vercel migration
+
+The server uses PostgreSQL and a transactional job outbox, with queue retries and
+idempotent result commits. Service tests additionally race independent database
+connections for seat capacity, move revisions and rate limits, and verify snapshot
+persistence and out-of-order odds repair. Browser fixtures use isolated Postgres.
+
+Operational limits are documented in `docs/catan.md`: small-game write throughput,
+queue beta status, guest cookie retention, no password recovery, and experimental
+Monte Carlo estimates. Hosted provisioning/deployment requires Neon marketplace
+terms acceptance; deployment verification is tracked separately from local tests.

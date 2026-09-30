@@ -11,8 +11,8 @@ interface Bootstrap {
   user: { name: string | null; registered: boolean; canRegister: boolean };
   rooms: RoomSummary[];
 }
-type Leaderboard = ReturnType<CatanStore['leaderboard']>;
-type Profile = ReturnType<CatanStore['profile']>;
+type Leaderboard = Awaited<ReturnType<CatanStore['leaderboard']>>;
+type Profile = Awaited<ReturnType<CatanStore['profile']>>;
 async function api<T>(query = '', body?: unknown): Promise<T> {
   const res = await fetch(`/api/catan${query}`, {
     cache: 'no-store',

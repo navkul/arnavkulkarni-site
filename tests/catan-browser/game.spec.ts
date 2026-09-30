@@ -1,3 +1,4 @@
+import { CatanStore } from '../../src/lib/catan/store';
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 const origin = 'http://127.0.0.1:3210';
 async function post(context: BrowserContext, body: object) {
@@ -140,7 +141,6 @@ test('a completed game becomes a profile, anonymous stats stay anonymous, and lo
   browser,
   page,
 }) => {
-  const { DatabaseSync } = await import('node:sqlite');
   const code = await makeTable(page, 'Future profile');
   const guestOne = await browser.newContext(),
     guestTwo = await browser.newContext();
@@ -149,30 +149,29 @@ test('a completed game becomes a profile, anonymous stats stay anonymous, and lo
     await post(guestTwo, { command: 'join', code, name: 'Private Guest Name Two' });
     let view = await current(page.context(), code);
     view = (await post(page.context(), { command: 'start', code, revision: view.revision })).room;
-    // Test-owned SQLite fixture: one real legal city action from victory. No debug API is shipped.
-    const db = new DatabaseSync(process.env.CATAN_DATABASE_PATH!);
+    // Test-owned Postgres fixture: one real legal city action from victory. No debug API is shipped.
+    const db = new CatanStore(process.env.CATAN_TEST_DATABASE_URL!);
     try {
-      db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
-      const saved = db.prepare('SELECT state FROM rooms WHERE code=?').get(code)!;
-      const room = JSON.parse(saved.state as string);
-      const g = room.game,
-        p = view.me;
-      g.phase = 'trade';
-      g.active = p;
-      g.turn = 20;
-      [0, 6, 12, 18, 24].forEach(
-        (v, i) =>
-          (g.board.vertices[v].building = { player: p, kind: i < 3 ? 'city' : 'settlement' }),
-      );
-      g.players[p].development = [{ kind: 'victory', boughtTurn: 1 }];
-      g.players[p].resources = { wood: 0, brick: 0, sheep: 0, wheat: 2, ore: 3 };
-      g.bank.wheat -= 2;
-      g.bank.ore -= 3;
-      room.revision++;
-      db.prepare('UPDATE rooms SET state=? WHERE code=?').run(JSON.stringify(room), code);
-      db.exec('COMMIT');
+      await db.transaction(async () => {
+        const room = await db.room(code);
+        const g = room.game!,
+          p = view.me;
+        g.phase = 'trade';
+        g.active = p;
+        g.turn = 20;
+        [0, 6, 12, 18, 24].forEach(
+          (v, i) =>
+            (g.board.vertices[v].building = { player: p, kind: i < 3 ? 'city' : 'settlement' }),
+        );
+        g.players[p].development = [{ kind: 'victory', boughtTurn: 1 }];
+        g.players[p].resources = { wood: 0, brick: 0, sheep: 0, wheat: 2, ore: 3 };
+        g.bank.wheat -= 2;
+        g.bank.ore -= 3;
+        room.revision++;
+        await db.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), code);
+      });
     } finally {
-      db.close();
+      await db.close();
     }
     await page.reload();
     await page.getByRole('button', { name: 'Upgrade city', exact: true }).click();

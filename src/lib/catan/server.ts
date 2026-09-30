@@ -1,53 +1,45 @@
-import { resolve } from 'node:path';
+import { send } from '@vercel/queue';
 import { CatanStore, type Room } from './store.ts';
 import { evaluate } from './simulation.ts';
 
-const globals = globalThis as typeof globalThis & {
-  catanStore?: CatanStore;
-  catanEvaluation?: Promise<void>;
-  catanQueued?: Set<string>;
-};
+const globals = globalThis as typeof globalThis & { catanStore?: CatanStore };
 export function getStore(): CatanStore {
   if (!globals.catanStore) {
-    if (process.env.VERCEL && !process.env.CATAN_DATABASE_PATH)
-      throw new Error(
-        'Catan requires a persistent Node host. Set CATAN_DATABASE_PATH to durable SQLite storage.',
-      );
-    globals.catanStore = new CatanStore(
-      resolve(/* turbopackIgnore: true */ process.env.CATAN_DATABASE_PATH ?? '.data/catan.sqlite'),
-    );
+    const url = process.env.CATAN_DATABASE_URL;
+    if (!url) throw new Error('Set CATAN_DATABASE_URL to a pooled PostgreSQL connection URL.');
+    globals.catanStore = new CatanStore(url);
   }
   return globals.catanStore;
 }
-/** Evaluate snapshots in move order so each delta compares consecutive evaluated moves. */
-export function queueEvaluation(room: Room): Promise<void> {
-  if (!room.game) return Promise.resolve();
-  const key = `${room.code}:${room.revision}`;
-  globals.catanQueued ??= new Set();
-  if (globals.catanQueued.has(key) || (room.odds?.revision ?? -1) >= room.revision)
-    return globals.catanEvaluation ?? Promise.resolve();
-  globals.catanQueued.add(key);
-  const snapshot = structuredClone(room);
-  globals.catanEvaluation = (globals.catanEvaluation ?? Promise.resolve())
-    .catch(() => {})
-    .then(async () => {
+export async function processEvaluation(code: string, revision: number) {
+  const store = getStore();
+  const game = await store.job(code, revision);
+  if (!game) return; // Already acknowledged, or no such durable job.
+  const configured = Number(process.env.CATAN_SIMULATION_SAMPLES ?? 32);
+  const samples = Number.isInteger(configured) ? Math.max(8, Math.min(256, configured)) : 32;
+  const odds = await evaluate(game, revision, undefined, { samples });
+  await store.saveOdds(code, odds);
+}
+/** Publish persisted outbox entries. Polling repairs failed publication and expired delivery. */
+export async function queueEvaluation(room?: Room): Promise<void> {
+  const store = getStore();
+  const jobs = await store.pendingJobs(room?.code);
+  await Promise.all(
+    jobs.map(async (job) => {
       try {
-        const store = getStore();
-        const current = store.room(snapshot.code);
-        const previous = store
-          .oddsHistory(snapshot.code)
-          .filter((o) => o.revision < snapshot.revision)
-          .at(-1);
-        if (current.odds && current.odds.revision >= snapshot.revision) return;
-        const configured = Number(process.env.CATAN_SIMULATION_SAMPLES ?? 32);
-        const samples = Number.isInteger(configured) ? Math.max(8, Math.min(256, configured)) : 32;
-        const odds = await evaluate(snapshot.game!, snapshot.revision, previous, { samples });
-        store.saveOdds(snapshot.code, odds);
+        if (process.env.VERCEL) {
+          await send('catan-evaluations', job, {
+            idempotencyKey: `${job.room}:${job.revision}:${Math.floor(Date.now() / 600_000)}`,
+            retentionSeconds: 86400,
+          });
+        } else {
+          // Local development uses the same durable jobs without needing Vercel credentials.
+          await processEvaluation(job.room, job.revision);
+        }
       } catch (error) {
-        console.error('Catan evaluation failed', error);
-      } finally {
-        globals.catanQueued!.delete(key);
+        await store.retryJob(job.room, job.revision);
+        console.error('Catan evaluation dispatch failed', error);
       }
-    });
-  return globals.catanEvaluation;
+    }),
+  );
 }

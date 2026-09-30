@@ -61,21 +61,21 @@ async function readBody(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const store = getStore();
-    const { identity, secret } = store.session(request.cookies.get(COOKIE)?.value);
+    const { identity, secret } = await store.session(request.cookies.get(COOKIE)?.value);
     const query = request.nextUrl.searchParams;
-    if (query.has('leaderboard')) return response(request, store.leaderboard(), secret);
-    if (query.has('profile')) return response(request, store.profile(identity), secret);
+    if (query.has('leaderboard')) return response(request, await store.leaderboard(), secret);
+    if (query.has('profile')) return response(request, await store.profile(identity), secret);
     const code = query.get('room')?.toUpperCase();
     if (code) {
-      const room = store.room(code);
+      const room = await store.room(code);
       if (room.status !== 'lobby' && !room.seats.some((s) => owns(identity, s)))
         throw new ServiceError('Only seated players can open this game.', 403);
-      if (room.game && room.odds?.revision !== room.revision) after(() => queueEvaluation(room));
+      if (room.game) after(() => queueEvaluation(room));
       return response(
         request,
         {
           room: roomView(room, identity),
-          history: room.seats.some((s) => owns(identity, s)) ? store.oddsHistory(code) : [],
+          history: room.seats.some((s) => owns(identity, s)) ? await store.oddsHistory(code) : [],
         },
         secret,
       );
@@ -86,10 +86,9 @@ export async function GET(request: NextRequest) {
         user: {
           name: identity.name ?? null,
           registered: !!identity.profileId,
-          canRegister: store.canRegister(identity),
+          canRegister: await store.canRegister(identity),
         },
-        rooms: store
-          .rooms()
+        rooms: (await store.rooms())
           .filter((r) => r.status === 'lobby' || r.seats.some((s) => owns(identity, s)))
           .sort((a, b) => b.updatedAt - a.updatedAt)
           .slice(0, 100)
@@ -114,9 +113,9 @@ export async function POST(request: NextRequest) {
       throw new ServiceError('Use application/json.', 415);
     const body = await readBody(request);
     const store = getStore();
-    const session = store.session(request.cookies.get(COOKIE)?.value);
+    const session = await store.session(request.cookies.get(COOKIE)?.value);
     const { identity } = session;
-    store.rateLimit(`session:${identity.sessionHash}`, 180);
+    await store.rateLimit(`session:${identity.sessionHash}`, 180);
     if (body.command === 'register' || body.command === 'login') {
       const secret =
         body.command === 'register'
@@ -124,13 +123,14 @@ export async function POST(request: NextRequest) {
           : await store.login(identity, body.name, body.password as string);
       return response(request, { ok: true }, secret);
     }
-    if (body.command === 'logout') return response(request, { ok: true }, store.logout(identity));
+    if (body.command === 'logout')
+      return response(request, { ok: true }, await store.logout(identity));
     if (body.command === 'create')
       return response(
         request,
         {
           room: roomView(
-            store.createRoom(identity, body.name, Number(body.capacity), body.guestName),
+            await store.createRoom(identity, body.name, Number(body.capacity), body.guestName),
             identity,
           ),
         },
@@ -141,13 +141,13 @@ export async function POST(request: NextRequest) {
     if (body.command === 'join')
       return response(
         request,
-        { room: roomView(store.join(identity, code, body.name), identity) },
+        { room: roomView(await store.join(identity, code, body.name), identity) },
         session.secret,
       );
     if (!['start', 'pause', 'resume', 'leave', 'action'].includes(body.command as string))
       throw new ServiceError('Unknown command.');
     const action = body.command === 'action' ? parseAction(body.action) : undefined;
-    const room = store.change(
+    const room = await store.change(
       identity,
       code,
       body.revision as number,
