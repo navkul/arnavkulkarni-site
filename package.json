@@ -14,7 +14,8 @@
     "format:check": "prettier --check .",
     "typecheck": "next typegen && tsc --noEmit",
     "test:e2e": "playwright test",
-    "test:e2e:unavailable": "E2E_STRAVA_MODE=unavailable playwright test"
+    "test:e2e:unavailable": "E2E_STRAVA_MODE=unavailable playwright test",
+    "test:catan": "node --experimental-strip-types --test tests/catan/*.test.ts"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",
