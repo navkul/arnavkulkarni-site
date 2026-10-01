@@ -4,11 +4,15 @@ import { remark } from 'remark';
 import html from 'remark-html';
 
 const README_URL = 'https://raw.githubusercontent.com/navkul/navkul/main/README.md';
-const FALLBACK_README = `[@CASP Systems Lab](https://sites.bu.edu/casp/) Scalable & efficient stream processing systems
+const FALLBACK_README = `[@Boston University](https://www.youtube.com/watch?v=dQw4w9WgXcQ) CS, Economics
+
+[@CASP Systems Lab](https://sites.bu.edu/casp/) Scalable & efficient stream processing systems
 
 [@Grepr](https://www.grepr.ai/) Real-time ML systems - Prev 2x. SWE intern
 
-CS, Economics - Boston University`;
+[@Catan](https://arnavkulkarni.com/catan) Considering going pro
+
+In my free time, I'm running/lifting or playing/watching soccer - Arsenal fan, unfortunately`;
 
 export async function getProfileReadmeHtml(): Promise<string> {
   let markdown = FALLBACK_README;

@@ -50,7 +50,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
         </Link>
         <article className="mt-8">
           <header className="mb-10">
-            <h1 className="text-4xl font-semibold mb-4">{blog.meta.title}</h1>
+            <h1 className="text-xl font-normal mb-4">{blog.meta.title}</h1>
             <div className="space-y-1">
               <time className="block text-sm text-gray-500">
                 Published {format(parseISO(blog.meta.date), 'MMMM d, yyyy')}

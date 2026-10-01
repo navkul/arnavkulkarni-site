@@ -60,23 +60,45 @@ test('blog index supports client navigation and return to homepage', async ({ pa
   await expect(page.locator('#blogs')).toBeVisible();
 });
 
-test('section navigation works at the current viewport', async ({ page, isMobile }) => {
+test('footer links stay visible while scrolling without covering the final content', async ({
+  page,
+}) => {
   await page.goto('/');
-  if (isMobile) {
-    await page.getByRole('button', { name: 'Toggle navigation' }).click();
-    await page
-      .getByRole('navigation', { name: 'Mobile navigation' })
-      .getByRole('link', { name: 'Blogs', exact: true })
-      .click();
-    await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeHidden();
-  } else {
-    await page
-      .getByRole('navigation', { name: 'Page navigation' })
-      .getByRole('link', { name: 'Blogs', exact: true })
-      .click();
+  await expect(page.getByRole('complementary')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Toggle navigation' })).toHaveCount(0);
+  const footer = page.getByRole('contentinfo');
+  for (const [name, href] of [
+    ['GitHub', 'https://github.com/navkul'],
+    ['LinkedIn', 'https://www.linkedin.com/in/arnav-a-kulkarni/'],
+  ]) {
+    const link = footer.getByRole('link', { name, exact: true });
+    await expect(link).toHaveAttribute('href', href);
+    await expect(link).toBeInViewport();
+    await expect(link.locator('img')).toHaveJSProperty('complete', true);
+    expect(
+      await link.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth),
+    ).toBeGreaterThan(0);
   }
-  await expect(page).toHaveURL('/#blogs');
-  await expect(page.locator('#blogs')).toBeInViewport();
+  // Check the footer after client navigation and scrolling on both viewports.
+  await page.locator('#blogs a').first().click();
+  for (const fraction of [0, 0.5, 1]) {
+    await page.evaluate((fraction) => {
+      window.scrollTo({
+        top: document.documentElement.scrollHeight * fraction,
+        behavior: 'instant',
+      });
+    }, fraction);
+    const bounds = await footer.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(Math.abs(bounds!.y + bounds!.height - page.viewportSize()!.height)).toBeLessThanOrEqual(
+      1,
+    );
+    await expect(footer.getByRole('link', { name: 'GitHub', exact: true })).toBeInViewport();
+  }
+  const contentBottom = await page
+    .locator('.blog-content')
+    .evaluate((element) => element.getBoundingClientRect().bottom);
+  expect(contentBottom).toBeLessThanOrEqual((await footer.boundingBox())!.y);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
