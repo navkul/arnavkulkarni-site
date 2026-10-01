@@ -17,6 +17,7 @@
   --primary: #0066cc;
   --border: #e5e5e5;
   --ring: #0066cc;
+  --site-footer-height: calc(4rem + env(safe-area-inset-bottom, 0px));
 }
 
 @layer base {
@@ -26,12 +27,39 @@
   body {
     @apply bg-background text-foreground font-mono;
     font-family: var(--font-ibm-plex-mono), monospace;
+    padding-bottom: var(--site-footer-height);
   }
 }
 
 /* Smooth scrolling for anchor links */
 html {
   scroll-behavior: smooth;
+  scroll-padding-bottom: calc(var(--site-footer-height) + 1rem);
+}
+
+.site-footer {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 50;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.footer-icon-link {
+  display: inline-flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+}
+
+.footer-icon-link:hover {
+  background: rgb(0 0 0 / 5%);
+}
+
+.footer-icon-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 
 /* Custom link styling */

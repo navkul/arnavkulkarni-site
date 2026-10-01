@@ -8,7 +8,7 @@ locked dependencies with `npm ci`.
 The homepage intro renders the public [GitHub profile README](https://github.com/navkul/navkul/blob/main/README.md).
 Next.js checks for updates on visits after a five-minute cache interval, so editing that README
 updates the intro without a site deployment. A failed or empty GitHub response uses the
-three-line fallback in `src/lib/profile-readme.ts`. Remote Markdown is sanitized before rendering.
+manually refreshed fallback in `src/lib/profile-readme.ts`. Remote Markdown is sanitized before rendering.
 The homepage no longer requests Strava data.
 
 ```sh
