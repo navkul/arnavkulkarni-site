@@ -1,0 +1,7 @@
+.data/
+test-results/
+playwright-report/
+coverage/
+PRDs/
+*.tsbuildinfo
+.env*

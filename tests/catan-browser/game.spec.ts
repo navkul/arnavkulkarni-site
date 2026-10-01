@@ -1,5 +1,7 @@
 import { finishOpening } from '../catan/helpers';
 import { CatanStore } from '../../src/lib/catan/store';
+import { applyAction } from '../../src/lib/catan/engine';
+import { recordVisuals } from '../../src/lib/catan/table-flow';
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 const origin = 'http://127.0.0.1:3210';
 async function post(context: BrowserContext, body: object) {
@@ -55,6 +57,11 @@ async function openingRolls(contexts: BrowserContext[], code: string, hosting = 
   }
   throw new Error('Opening rolls did not settle');
 }
+async function tableOption(page: Page, name: string) {
+  const button = page.getByRole('button', { name, exact: true });
+  if (!(await button.isVisible())) await page.getByLabel('Table options', { exact: true }).click();
+  return button;
+}
 async function makeTable(page: Page, name: string, capacity = 4) {
   await page.goto('/catan');
   await page.getByLabel('Your name', { exact: true }).fill(name);
@@ -98,10 +105,14 @@ test('three independent browsers join, synchronize setup, protect hands and reco
       const index = views.findIndex((v) => v.me === v.game.active),
         view = views[index];
       const actorPage = contexts[index].pages()[0];
-      await expect(actorPage.getByLabel('Or choose a board location')).toBeVisible();
       const id =
         view.game.phase === 'setup-settlement' ? view.legal.settlements[0] : view.legal.roads[0];
-      await actorPage.getByLabel('Or choose a board location').selectOption(String(id));
+      await actorPage
+        .getByRole('button', {
+          name: `${view.game.phase === 'setup-settlement' ? 'Build settlement' : 'Build road'} ${id + 1}`,
+          exact: true,
+        })
+        .click();
       await expect
         .poll(async () => (await current(contexts[index], code)).revision)
         .toBeGreaterThan(view.revision);
@@ -132,7 +143,7 @@ test('three independent browsers join, synchronize setup, protect hands and reco
       views[0].game.players.find((p: { name: string }) => p.name === 'Browser host').color,
     ).toBe(4);
     const requester = contexts[1].pages()[0];
-    await requester.getByRole('button', { name: 'Pause & save' }).click();
+    await (await tableOption(requester, 'Pause & save')).click();
     await expect(page.getByRole('button', { name: 'Agree to pause' })).toBeVisible();
     await page.getByRole('button', { name: 'Agree to pause' }).click();
     await expect.poll(async () => (await current(contexts[0], code)).pauseRequest?.votes).toBe(2);
@@ -142,7 +153,7 @@ test('three independent browsers join, synchronize setup, protect hands and reco
       await expect(
         context.pages()[0].getByRole('heading', { name: 'Game paused', exact: true }),
       ).toBeVisible();
-    await requester.getByRole('button', { name: 'Resume game' }).click();
+    await (await tableOption(requester, 'Resume game')).click();
     await expect.poll(async () => (await current(contexts[0], code)).status).toBe('playing');
     const outsider = await browser.newContext();
     expect((await outsider.request.get(`${origin}/api/catan?room=${code}`)).status()).toBe(403);
@@ -188,7 +199,7 @@ test('six-player room enforces membership, size, origin and revision', async ({
     for (const context of contexts.slice(1)) await context.close();
   }
 });
-test('phone lobby and stats layout stay within viewport', async ({ page }) => {
+test('phone lobby stays within viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/catan');
   await expect(page.getByRole('heading', { name: 'CATAN', exact: true })).toBeVisible();
@@ -196,8 +207,7 @@ test('phone lobby and stats layout stay within viewport', async ({ page }) => {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBeTruthy();
   await page.screenshot({ path: 'test-results/catan/mobile-lobby.png', fullPage: true });
-  await page.getByRole('heading', { name: 'Leaderboard', exact: true }).scrollIntoViewIfNeeded();
-  await expect(page.getByRole('heading', { name: 'Leaderboard', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Leaderboard', exact: true })).toHaveCount(0);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBeTruthy();
@@ -245,22 +255,21 @@ test('a completed game becomes a profile, anonymous stats stay anonymous, and lo
       await db.close();
     }
     await page.reload();
-    await page.getByRole('button', { name: 'Upgrade city', exact: true }).click();
-    await page.getByLabel('Or choose a board location').selectOption('18');
+    await page.getByRole('button', { name: 'Buy city', exact: true }).click();
+    await page.getByRole('button', { name: 'Upgrade city 19', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'The game is in the books.' })).toBeVisible();
-    await page.getByRole('button', { name: 'Create profile & keep my stats' }).click();
-    await page.getByLabel('Profile name').fill('Browser Champion');
+    await page.getByRole('link', { name: 'Create profile & keep my stats' }).click();
+    await page.getByLabel('Username', { exact: true }).fill('Browser Champion');
     await page.getByLabel('Password', { exact: true }).fill('browser test password');
-    await page.getByRole('button', { name: 'Create profile & save stats' }).click();
-    await expect(page.getByRole('button', { name: 'Browser Champion', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Browser Champion', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Browser Champion’s stats' })).toBeVisible();
-    await expect(page.getByText('Victory · 10 points', { exact: false })).toBeVisible();
+    await page.locator('form').getByRole('button', { name: 'Create account', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Browser Champion', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText('10 pts', { exact: true })).toBeVisible();
     const history = await page.context().request.get(`${origin}/api/catan?profile`);
     expect(JSON.stringify(await history.json())).not.toContain('Private Guest Name');
-    await page.getByRole('button', { name: 'Back to tables', exact: false }).click();
-    await page.getByRole('heading', { name: 'Leaderboard', exact: true }).scrollIntoViewIfNeeded();
-    await expect(page.getByRole('cell', { name: '100%' })).toBeVisible();
+    await page.getByRole('link', { name: '← Catan', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Leaderboard', exact: true })).toHaveCount(0);
 
     await page.getByLabel('Table name', { exact: true }).fill('Saved table');
     await page.getByRole('button', { name: 'Start table', exact: true }).click();
@@ -276,7 +285,7 @@ test('a completed game becomes a profile, anonymous stats stay anonymous, and lo
     } finally {
       await pauseDb.close();
     }
-    await page.getByRole('button', { name: 'Pause & save' }).click();
+    await (await tableOption(page, 'Pause & save')).click();
     await expect
       .poll(async () => (await current(page.context(), savedCode)).pauseRequest?.votes)
       .toBe(1);
@@ -289,28 +298,28 @@ test('a completed game becomes a profile, anonymous stats stay anonymous, and lo
     try {
       const returnPage = await returning.newPage();
       await returnPage.goto(`${origin}/catan`);
-      await returnPage.getByLabel('Your name', { exact: true }).fill('Browser Champion');
-      await returnPage.getByText('Use a profile', { exact: true }).click();
-      await returnPage.getByRole('button', { name: 'Sign in', exact: true }).click();
-      await returnPage.getByLabel('Profile name').fill('Browser Champion');
+      await returnPage.getByRole('link', { name: 'Sign in / Sign up', exact: true }).click();
+      await returnPage.getByLabel('Username', { exact: true }).fill('Browser Champion');
       await returnPage.getByLabel('Password', { exact: true }).fill('browser test password');
       await returnPage.getByLabel('Password', { exact: true }).press('Enter');
       await expect(
-        returnPage.getByRole('button', { name: 'Browser Champion', exact: true }),
+        returnPage.getByRole('heading', { name: 'Browser Champion', exact: true }),
       ).toBeVisible();
       await returnPage.goto(`${origin}/catan?room=${savedCode}`);
-      await returnPage.getByRole('button', { name: 'Resume game', exact: true }).click();
+      await (await tableOption(returnPage, 'Resume game')).click();
       await expect.poll(async () => (await current(returning, savedCode)).status).toBe('playing');
       await returnPage.setViewportSize({ width: 390, height: 844 });
       expect(
         await returnPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       ).toBeTruthy();
       await returnPage.screenshot({ path: 'test-results/catan/mobile-game.png', fullPage: true });
-      await returnPage.getByRole('button', { name: 'Browser Champion', exact: true }).click();
+      await returnPage.getByRole('link', { name: 'Browser Champion', exact: true }).click();
       await returnPage.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await expect(returnPage.getByLabel('Username', { exact: true })).toBeEditable();
+      await returnPage.getByRole('link', { name: '← Catan', exact: true }).click();
       await expect(returnPage.getByLabel('Your name', { exact: true })).toBeEditable();
       await expect(
-        returnPage.getByRole('button', { name: 'Browser Champion', exact: true }),
+        returnPage.getByRole('link', { name: 'Browser Champion', exact: true }),
       ).toHaveCount(0);
     } finally {
       await returning.close();
@@ -369,8 +378,11 @@ test('local mode discovers tables and plays with all external browser requests b
     const index = views.findIndex((v) => v.me === v.game.active);
     const actor = contexts[index].pages()[0];
     await actor
-      .getByLabel('Or choose a board location')
-      .selectOption(String(views[index].legal.settlements[0]));
+      .getByRole('button', {
+        name: `Build settlement ${views[index].legal.settlements[0] + 1}`,
+        exact: true,
+      })
+      .click();
     await expect
       .poll(
         async () =>
@@ -390,7 +402,7 @@ test('local mode discovers tables and plays with all external browser requests b
     expect(state.winProbability).toBe(false);
     expect(state.odds).toBeUndefined();
     await expect(page.getByLabel('Win probability history, from 0 to 100 percent')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Pause & save' })).toBeVisible();
+    await expect(await tableOption(page, 'Pause & save')).toBeVisible();
     expect(external).toEqual([]);
     const leaderboard = await contexts[0].request.get(
       `${origin}/api/catan?hosting=local&leaderboard`,
@@ -476,7 +488,7 @@ test('illustrated cards, table-wide trades and host end-game controls synchroniz
     await expect
       .poll(async () => (await current(page.context(), code)).game.deckCount)
       .toBe(deckBefore - 1);
-    await page.getByText('Play a development card', { exact: true }).click();
+    await page.getByRole('button', { name: 'Year of plenty', exact: true }).click();
     await page.getByRole('combobox', { name: 'Card', exact: true }).selectOption('plenty');
     await page.getByRole('button', { name: 'Play card', exact: true }).click();
     await expect
@@ -492,7 +504,7 @@ test('illustrated cards, table-wide trades and host end-game controls synchroniz
     const publicPlayer = (await current(guests[0], code)).game.players[hostView.me];
     expect(publicPlayer.development).toBeUndefined();
     expect(publicPlayer.playedDevelopment).toEqual([{ kind: 'plenty', turn: 10 }]);
-    await page.getByText('Offer a trade', { exact: true }).click();
+    await page.getByRole('button', { name: 'Trade ⇄', exact: true }).click();
     await expect(page.getByRole('combobox', { name: 'Trade with', exact: true })).toHaveValue(
       'all',
     );
@@ -505,10 +517,32 @@ test('illustrated cards, table-wide trades and host end-game controls synchroniz
       .getByLabel('ore', { exact: true })
       .fill('1');
     await page.getByRole('button', { name: 'Send trade offer' }).click();
+    await guestPage.getByRole('button', { name: 'View trade', exact: true }).click();
     await expect(guestPage.getByRole('button', { name: 'Accept trade' })).toBeEnabled();
     await guestPage.getByRole('button', { name: 'Accept trade' }).click();
     await expect.poll(async () => (await current(page.context(), code)).game.offer).toBeUndefined();
     await expect(page.locator('.ct-trade-offer')).toHaveCount(0);
+    const beforeBank = await current(page.context(), code);
+    await page.getByRole('button', { name: 'Bank & ports', exact: true }).click();
+    await page
+      .getByRole('group', { name: /^Give / })
+      .getByRole('button', { name: 'ore', exact: true })
+      .click();
+    await page
+      .getByRole('group', { name: 'Receive 1', exact: true })
+      .getByRole('button', { name: 'wood', exact: true })
+      .click();
+    await page
+      .getByRole('button', { name: `Trade ${beforeBank.legal.ratios.ore}:1`, exact: true })
+      .click();
+    await expect
+      .poll(async () => (await current(page.context(), code)).game.hand.resources.wood)
+      .toBe(beforeBank.game.hand.resources.wood + 1);
+    await expect
+      .poll(async () => (await current(page.context(), code)).game.hand.resources.ore)
+      .toBe(beforeBank.game.hand.resources.ore - beforeBank.legal.ratios.ore);
+    await page.getByRole('button', { name: 'Close trading table' }).click();
+    await guestPage.getByRole('button', { name: 'Close trading table' }).click();
     await expect(page.getByRole('button', { name: 'End turn', exact: true })).toBeVisible();
     await page.screenshot({ path: 'test-results/catan/illustrated-game.png', fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -523,11 +557,11 @@ test('illustrated cards, table-wide trades and host end-game controls synchroniz
       data: { command: 'end-game', code, revision: before.revision },
     });
     expect(denied.status()).toBe(403);
-    await page.getByRole('button', { name: 'End game', exact: true }).click();
+    await (await tableOption(page, 'End game')).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByRole('button', { name: 'Keep playing' }).click();
     expect((await current(page.context(), code)).status).toBe('playing');
-    await page.getByRole('button', { name: 'End game', exact: true }).click();
+    await (await tableOption(page, 'End game')).click();
     await page.getByRole('button', { name: 'End game for everyone' }).click();
     await expect(page.getByRole('heading', { name: 'Game ended', exact: true })).toBeVisible();
     await expect(guestPage.getByRole('heading', { name: 'Game ended', exact: true })).toBeVisible();
@@ -543,10 +577,12 @@ test('illustrated cards, table-wide trades and host end-game controls synchroniz
   }
 });
 
-test('production hides solo testing and rejects both test-only commands', async ({ page }) => {
+test('production hides the local singleton and rejects its test-only commands', async ({
+  page,
+}) => {
   await page.goto('/catan');
-  await expect(page.getByRole('button', { name: 'Start test game', exact: true })).toHaveCount(0);
-  for (const command of ['create-test', 'test-player']) {
+  await expect(page.getByRole('button', { name: 'Open test table', exact: true })).toHaveCount(0);
+  for (const command of ['create-test', 'test-player', 'test-add-player', 'delete-test']) {
     const response = await page.request.post(`${origin}/api/catan?hosting=local`, {
       headers: { origin },
       data: {
@@ -561,6 +597,114 @@ test('production hides solo testing and rejects both test-only commands', async 
     });
     expect(response.status()).toBe(403);
     expect((await response.json()).error).toContain('local development');
+  }
+});
+
+test('3D island supports camera controls, keyboard building, mobile sizing and WebGL fallback', async ({
+  browser,
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const code = await makeTable(page, '3D host', 3);
+  const guests = [await browser.newContext(), await browser.newContext()];
+  const db = new CatanStore(process.env.CATAN_TEST_DATABASE_URL!);
+  let fallback: BrowserContext | undefined;
+  try {
+    for (let i = 0; i < guests.length; i++)
+      await post(guests[i], { command: 'join', code, name: `3D guest ${i}` });
+    const lobby = await current(page.context(), code);
+    await post(page.context(), { command: 'start', code, revision: lobby.revision });
+    const room = await db.room(code);
+    room.status = 'playing';
+    room.opening = undefined;
+    room.visualEvents = [];
+    room.revision++;
+    await db.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), code);
+    await page.goto(`${origin}/catan?room=${code}`);
+    await expect(page.locator('main')).toHaveClass(/ct-app/);
+    await expect(page.locator('main')).not.toHaveClass(/ct-studio/);
+    const board = page.locator('[data-renderer="three"]');
+    await expect(board).toBeVisible();
+    await expect(board.locator('canvas')).toBeVisible();
+    let view = await current(page.context(), code);
+    const site = view.legal.settlements[0];
+    const target = page.getByRole('button', { name: `Build settlement ${site + 1}`, exact: true });
+    await expect(target).toBeVisible();
+    await expect.poll(async () => (await target.boundingBox())?.x ?? 0).toBeGreaterThan(30);
+    const beforeZoom = await target.boundingBox();
+    await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    await expect
+      .poll(async () => Math.abs(((await target.boundingBox())?.x ?? 0) - beforeZoom!.x))
+      .toBeGreaterThan(1);
+    await page.getByRole('button', { name: 'Reset view', exact: true }).click();
+    await target.scrollIntoViewIfNeeded();
+    const point = await target.boundingBox();
+    // Exercise the canvas raycast path underneath the accessible placement button.
+    await target.evaluate((button) => (button.style.pointerEvents = 'none'));
+    const touch = await page.context().newCDPSession(page);
+    await touch.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [
+        { x: point!.x + point!.width / 2 + 40, y: point!.y + point!.height / 2, id: 1 },
+        { x: point!.x + point!.width / 2, y: point!.y + point!.height / 2, id: 2 },
+      ],
+    });
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await touch.detach();
+    await target.evaluate((button) => (button.style.pointerEvents = ''));
+    await page.waitForTimeout(300);
+    expect((await current(page.context(), code)).revision).toBe(view.revision);
+    await target.focus();
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(
+        async () => (await current(page.context(), code)).game.board.vertices[site].building?.kind,
+      )
+      .toBe('settlement');
+    view = await current(page.context(), code);
+    const edge = view.legal.roads[0];
+    await page.getByRole('button', { name: `Build road ${edge + 1}`, exact: true }).click();
+    await expect
+      .poll(async () => (await current(page.context(), code)).game.board.edges[edge].player)
+      .toBe(0);
+    await expect(page.getByRole('button', { name: '2D view', exact: true })).toHaveCount(0);
+    await expect(page.getByText('Island details', { exact: true })).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight))
+      .toBe(true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+      .toBe(true);
+    await page.locator('.ct3d-board').screenshot({ path: 'test-results/catan/3d-mobile.png' });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(page.locator('[data-renderer="three"] canvas')).toBeVisible();
+    fallback = await browser.newContext();
+    await fallback.addCookies(await page.context().cookies());
+    await fallback.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (
+        this: HTMLCanvasElement,
+        type: string,
+        ...args: unknown[]
+      ) {
+        if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') return null;
+        return Reflect.apply(original, this, [type, ...args]);
+      } as typeof original;
+    });
+    const flat = await fallback.newPage();
+    await flat.goto(`${origin}/catan?room=${code}`);
+    await expect(flat.locator('[data-renderer="svg"] svg.ct-board')).toBeVisible();
+    await expect(flat.getByLabel('Your private hand')).toBeVisible();
+    await page.getByRole('button', { name: '← All tables', exact: true }).click();
+    await expect(page).toHaveURL(`${origin}/catan`);
+    await expect(page.getByRole('button', { name: 'Start table', exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await db.close();
+    await fallback?.close();
+    for (const guest of guests) await guest.close();
   }
 });
 
@@ -586,8 +730,10 @@ test('award cards travel to the winner on both screens; colored dice share one r
     room.revision++;
     await db.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), code);
     await page.reload();
+    await expect(page.locator('[data-renderer="three"]')).toBeVisible();
     const observer = await guests[0].newPage();
     await observer.goto(`${origin}/catan?room=${code}`);
+    await expect(observer.locator('[data-renderer="three"]')).toBeVisible();
     await expect(page.getByText('Recent moves', { exact: true })).toHaveCount(0);
     await expect(page.getByText('At the table', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Buy city', exact: true }).click();
@@ -605,9 +751,8 @@ test('award cards travel to the winner on both screens; colored dice share one r
         0,
       );
     }
-    await expect
-      .poll(async () => (await page.locator('.ct-award-flight').boundingBox())?.width ?? 0)
-      .toBeGreaterThan(120);
+    await expect(page.locator('.ct-award-flight')).toHaveCSS('animation-name', 'ct-award-snap');
+    await expect(page.locator('.ct-award-flight')).toHaveCSS('animation-duration', '1.2s');
     await page.screenshot({ path: 'test-results/catan/award-animation.png', fullPage: true });
     for (const screen of [page, observer])
       await expect(
@@ -645,6 +790,7 @@ test('award cards travel to the winner on both screens; colored dice share one r
     room.revision++;
     await db.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), code);
     await page.reload();
+    await expect(page.locator('[data-renderer="three"]')).toBeVisible();
     view = await current(page.context(), code);
     await post(page.context(), {
       command: 'action',
@@ -663,24 +809,93 @@ test('award cards travel to the winner on both screens; colored dice share one r
     room.revision++;
     await db.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), code);
     await page.reload();
+    await expect(page.locator('[data-renderer="three"]')).toBeVisible();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.getByRole('button', { name: 'Roll dice', exact: true }).click();
     await expect
       .poll(async () => (await current(page.context(), code)).diceEvent?.values?.length)
       .toBe(2);
     const event = (await current(page.context(), code)).diceEvent;
     expect((await current(guests[0], code)).diceEvent).toEqual(event);
-    for (const screen of [page, observer]) {
-      await expect(
-        screen.getByRole('status', { name: `Award host rolled ${event.values.join(' and ')}` }),
-      ).toBeVisible();
-      await expect(screen.locator('.ct-cube-face-1').first()).toHaveCSS(
-        'background-color',
-        'rgb(189, 80, 56)',
-      );
-    }
-    await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(page.locator('.ct-cube').first()).toHaveCSS('animation-name', 'none');
+    await Promise.all(
+      [page, observer].map(async (screen) => {
+        await expect(
+          screen.getByRole('status', { name: `Award host rolled ${event.values.join(' and ')}` }),
+        ).toBeVisible();
+        await expect(screen.locator('.ct-cube-face-1').first()).toHaveCSS(
+          'background-color',
+          'rgb(189, 80, 56)',
+        );
+      }),
+    );
     await page.screenshot({ path: 'test-results/catan/colored-dice.png', fullPage: true });
+  } finally {
+    await db.close();
+    for (const guest of guests) await guest.close();
+  }
+});
+
+test('a seven settles before robber targets or discards, and the map chooses the destination', async ({
+  browser,
+  page,
+}) => {
+  const code = await makeTable(page, 'Robber host', 3);
+  const guests = [await browser.newContext(), await browser.newContext()];
+  const db = new CatanStore(process.env.CATAN_TEST_DATABASE_URL!);
+  try {
+    for (let i = 0; i < guests.length; i++)
+      await post(guests[i], { command: 'join', code, name: `Robber guest ${i}` });
+    const view = await current(page.context(), code);
+    await post(page.context(), { command: 'start', code, revision: view.revision });
+    let room = await db.room(code);
+    room.status = 'playing';
+    room.opening = undefined;
+    room.game!.phase = 'roll';
+    room.game!.active = 0;
+    room.visualEvents = [];
+    room.diceEvent = undefined;
+    const target = room.game!.board.hexes.find((h) => h.id !== room.game!.board.robber)!;
+    room.game!.board.vertices[target.vertices[0]].building = { player: 1, kind: 'settlement' };
+    room.game!.players[1].resources.wood = 3;
+    room.game!.bank.wood -= 3;
+    room.revision++;
+    await db.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), code);
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Roll dice', exact: true })).toBeVisible();
+    const seven = async () => {
+      const before = room.game!;
+      let die = 0;
+      room.game = applyAction(before, 0, { type: 'roll' }, () => [0.4, 0.55][die++ % 2]);
+      recordVisuals(room, before, before.players[0].id, { type: 'roll' }, Date.now() + 1500);
+      room.revision++;
+      await db.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), code);
+    };
+    await seven();
+    await expect(page.locator('.ct-dice-stage')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Hex \d+:/ })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Your move' })).not.toBeVisible();
+    const targets = page.getByRole('button', { name: /^Hex \d+:/ });
+    await expect(targets.first()).toBeVisible();
+    await targets.first().click();
+    await expect(page.getByRole('dialog', { name: 'Your move' })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Robber destination' })).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Steal from', exact: true })).toHaveValue('1');
+    await page.getByRole('button', { name: 'Move robber & steal', exact: true }).click();
+    await expect.poll(async () => (await db.room(code)).game!.board.robber).toBe(target.id);
+    await expect.poll(async () => (await db.room(code)).game!.players[0].resources.wood).toBe(1);
+    await expect(page.getByRole('dialog', { name: 'Your move' })).not.toBeVisible();
+
+    room = await db.room(code);
+    room.game!.phase = 'roll';
+    room.game!.bank.wood -= 9;
+    room.game!.players[0].resources.wood = 10;
+    await seven();
+    await expect(page.locator('.ct-dice-stage')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Your move' })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Discard cards', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Your move' })).toBeVisible();
+    await expect(page.getByText('Discard exactly 5 resources', { exact: true })).toBeVisible();
   } finally {
     await db.close();
     for (const guest of guests) await guest.close();
