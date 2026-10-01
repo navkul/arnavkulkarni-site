@@ -189,3 +189,18 @@ The guard requires the database name `catan_test`; never point it at real user d
 Run those suites sequentially. Browser tests use port 3210 and a separate
 `.data/catan-browser-local.sqlite` for self-host checks. Local unit tests use temporary directories. Screenshots/traces are in `test-results/catan`.
 The preexisting site browser tests remain available through `npm run test:e2e`.
+
+## Solo testing in development
+
+Run `npm run dev`, open `/catan`, and click **Start test game** below the create form.
+No names, Postgres setup, or other browsers are required. The player slider chooses
+3–6 seats. A local, unranked test table opens immediately with starting settlements
+and roads placed, stocked resource hands, and the first roll ready.
+
+One browser controls all seats. After each move the view follows the active player
+(or the next player who must discard). Use **View / control player** to inspect a
+different hand or accept a trade as its recipient. Test players are manually
+controlled placeholders, not AI opponents. End the table with the host's End game
+control. Test games save locally, never write results, and disable probability jobs.
+The entry point and server-side test controls are available only in development;
+production builds and Vercel reject them.

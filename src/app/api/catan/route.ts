@@ -3,6 +3,7 @@ import { getStore, queueEvaluation, offlineOnly } from '@/lib/catan/server';
 import { owns, ServiceError } from '@/lib/catan/store';
 import { roomSummary, roomView } from '@/lib/catan/view';
 import { networkInterfaces } from 'node:os';
+import { testingAvailable } from '@/lib/catan/testing-mode';
 import { parseAction } from '@/lib/catan/input';
 
 export const runtime = 'nodejs';
@@ -133,6 +134,8 @@ export async function POST(request: NextRequest) {
     if (!request.headers.get('content-type')?.startsWith('application/json'))
       throw new ServiceError('Use application/json.', 415);
     const body = await readBody(request);
+    if (['create-test', 'test-player'].includes(body.command as string) && !testingAvailable())
+      throw new ServiceError('Testing mode is available only in local development.', 403);
     const requested = request.nextUrl.searchParams.get('hosting');
     if (requested && !['server', 'local'].includes(requested))
       throw new ServiceError('Invalid hosting mode.');
@@ -140,6 +143,25 @@ export async function POST(request: NextRequest) {
     const session = await store.session(request.cookies.get(sessionCookie(request))?.value);
     const { identity } = session;
     await store.rateLimit(`session:${identity.sessionHash}`, 180);
+    if (body.command === 'create-test') {
+      const room = await store.createTestRoom(
+        identity,
+        body.name,
+        Number(body.capacity),
+        body.guestName,
+      );
+      return response(request, { room: roomView(room, identity) }, session.secret);
+    }
+    if (body.command === 'test-player') {
+      if (typeof body.code !== 'string') throw new ServiceError('Enter a room code.');
+      const room = await store.selectTestPlayer(
+        identity,
+        body.code.toUpperCase(),
+        body.revision as number,
+        body.player,
+      );
+      return response(request, { room: roomView(room, identity) }, session.secret);
+    }
     if (body.command === 'register' || body.command === 'login') {
       const secret =
         body.command === 'register'

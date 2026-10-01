@@ -38,11 +38,13 @@ export default function CatanApp({
   initialHosting = 'server',
   localAvailable = false,
   localOnly = false,
+  testingAvailable = false,
 }: {
   initialCode?: string;
   initialHosting?: 'server' | 'local';
   localAvailable?: boolean;
   localOnly?: boolean;
+  testingAvailable?: boolean;
 }) {
   const [selfHost, setSelfHost] = useState(initialHosting === 'local');
   const hosting = selfHost && localAvailable ? 'local' : 'server';
@@ -115,7 +117,7 @@ export default function CatanApp({
       seq.current++;
     };
   }, [refresh]);
-  function openRoom(next: string) {
+  function openRoom(next: string, nextHosting = hosting) {
     setCode(next);
     currentCode.current = next;
     setRoom(undefined);
@@ -125,16 +127,16 @@ export default function CatanApp({
     setCopied(false);
     const params = new URLSearchParams();
     if (next) params.set('room', next);
-    if (hosting === 'local') params.set('hosting', 'local');
+    if (nextHosting === 'local') params.set('hosting', 'local');
     window.history.replaceState(null, '', `/catan${params.size ? '?' + params : ''}`);
   }
-  async function run(fn: () => Promise<void>) {
+  async function run(fn: () => Promise<void>, refreshAfter = true) {
     if (busy) return;
     setBusy(true);
     setError('');
     try {
       await fn();
-      await refresh();
+      if (refreshAfter) await refresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -382,6 +384,35 @@ export default function CatanApp({
                   Start table
                 </button>
               </form>
+              {testingAvailable && (
+                <div className="ct-test-start">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        const result = await request<{ room: RoomView }>('local', '', {
+                          command: 'create-test',
+                          name: roomName.trim() || 'Test table',
+                          guestName: guestName.trim() || 'You',
+                          capacity,
+                        });
+                        setSelfHost(true);
+                        setBootstrap(undefined);
+                        setOffline(false);
+                        setAuth(undefined);
+                        openRoom(result.room.code, 'local');
+                        setRoom(result.room);
+                      }, false)
+                    }
+                  >
+                    Start test game
+                  </button>
+                  <p className="ct-muted">
+                    Development only · control all {capacity} seats · no stats
+                  </p>
+                </div>
+              )}
             </section>
             <section className="ct-lobby-section">
               <h2>Join a table</h2>
@@ -581,6 +612,37 @@ export default function CatanApp({
           )}
           {room?.game && (
             <>
+              {testingAvailable && room.testing && (
+                <div className="ct-test-toolbar">
+                  <span>
+                    <strong>Test game</strong> · You control every seat. Turns switch automatically.
+                  </span>
+                  <label>
+                    View / control player
+                    <select
+                      value={room.me}
+                      disabled={busy}
+                      onChange={(e) =>
+                        void run(async () => {
+                          const result = await api<{ room: RoomView }>('', {
+                            command: 'test-player',
+                            code: room.code,
+                            revision: room.revision,
+                            player: Number(e.target.value),
+                          });
+                          setRoom(result.room);
+                        })
+                      }
+                    >
+                      {room.game.players.map((p, i) => (
+                        <option key={i} value={i}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
               <GameTable
                 key={room.code}
                 room={room}

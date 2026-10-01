@@ -7,10 +7,11 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import { promisify } from 'node:util';
-import { applyAction, RuleError, score } from './engine.ts';
-import { type Action, type Game, type PlayerMetrics } from './types.ts';
+import { applyAction, RuleError, score, roadSites, settlementSites } from './engine.ts';
+import { RESOURCES, type Action, type Game, type PlayerMetrics } from './types.ts';
 import { createGame } from './engine.ts';
 import { shuffle } from './board.ts';
+import { testingAvailable } from './testing-mode.ts';
 
 const scrypt = promisify(scryptCallback);
 export const secureRandom = () => randomInt(0, 0x100000000) / 0x100000000;
@@ -52,6 +53,8 @@ export interface Room {
   capacity: 3 | 4 | 5 | 6;
   hosting?: 'server' | 'local';
   winProbability?: boolean;
+  testing?: boolean;
+  testPlayer?: number;
   host: string;
   seats: Seat[];
   status: 'lobby' | 'playing' | 'paused' | 'finished' | 'ended';
@@ -82,6 +85,13 @@ interface ResultRow {
 }
 export function owns(identity: Identity, seat: Seat) {
   return seat.profileId ? identity.profileId === seat.profileId : identity.guestId === seat.guestId;
+}
+/** The real host owns the sandbox; only its selected test hand changes. */
+export function controlledSeat(room: Room, identity: Identity) {
+  const owner = room.seats.find((s) => owns(identity, s));
+  return room.testing && testingAvailable() && owner?.id === room.host
+    ? room.seats[room.testPlayer ?? 0]
+    : owner;
 }
 export async function passwordHash(password: string): Promise<string> {
   check(
@@ -354,6 +364,77 @@ export class CatanStore {
       return room;
     });
   }
+  async createTestRoom(
+    identity: Identity,
+    name: unknown,
+    capacity: number,
+    guestName: unknown,
+  ): Promise<Room> {
+    check(
+      testingAvailable() && this.hosting === 'local',
+      'Testing mode is available only in local development.',
+      403,
+    );
+    return this.transaction(async () => {
+      const room = await this.createRoom(identity, name, capacity, guestName, false);
+      room.testing = true;
+      room.testPlayer = 0;
+      while (room.seats.length < capacity)
+        room.seats.push({
+          id: token(),
+          guestId: token(),
+          name: `Test player ${room.seats.length + 1}`,
+        });
+      let game = createGame(
+        room.seats.map((s) => ({ id: s.id, name: s.name })),
+        secureRandom,
+      );
+      while (game.phase.startsWith('setup')) {
+        const action: Action =
+          game.phase === 'setup-settlement'
+            ? { type: 'settlement', vertex: settlementSites(game, game.active, true)[0] }
+            : { type: 'road', edge: roadSites(game, game.active, game.setupVertex)[0] };
+        game = applyAction(game, game.active, action, secureRandom);
+      }
+      // Stock every test hand from the bank so builds, cards and trades can be explored.
+      for (const player of game.players)
+        for (const resource of RESOURCES) {
+          const extra = Math.min(game.bank[resource], Math.max(0, 3 - player.resources[resource]));
+          player.resources[resource] += extra;
+          game.bank[resource] -= extra;
+        }
+      room.game = game;
+      room.status = 'playing';
+      room.startedAt = Date.now();
+      room.revision++;
+      await this.save(room);
+      return room;
+    });
+  }
+  async selectTestPlayer(identity: Identity, code: string, revision: number, player: unknown) {
+    check(
+      testingAvailable() && this.hosting === 'local',
+      'Testing mode is available only in local development.',
+      403,
+    );
+    return this.transaction(async () => {
+      const room = await this.room(code);
+      check(
+        room.testing && room.seats.some((s) => s.id === room.host && owns(identity, s)),
+        'Only the test host can control these seats.',
+        403,
+      );
+      check(revision === room.revision, 'The game changed. Try again.', 409);
+      check(
+        Number.isInteger(player) && Number(player) >= 0 && Number(player) < room.seats.length,
+        'Choose a test player.',
+      );
+      room.testPlayer = Number(player);
+      room.revision++;
+      await this.save(room);
+      return room;
+    });
+  }
   async join(identity: Identity, code: string, name: unknown): Promise<Room> {
     return this.transaction(async () => {
       const room = await this.room(code);
@@ -392,6 +473,7 @@ export class CatanStore {
         'The game changed. Review the latest board and try again.',
         409,
       );
+      check(!room.testing || testingAvailable(), 'Test games require local development.', 403);
       if (command === 'start') {
         check(
           seat.id === room.host && room.status === 'lobby',
@@ -445,9 +527,15 @@ export class CatanStore {
         if (room.host === seat.id) room.host = room.seats[0].id;
       } else if (command === 'action') {
         check(room.status === 'playing' && room.game && action, 'This game is not active.');
-        const player = room.game.players.findIndex((p) => p.id === seat.id);
+        const actor = controlledSeat(room, identity)!;
+        const player = room.game.players.findIndex((p) => p.id === actor.id);
         try {
           room.game = applyAction(room.game, player, action, secureRandom);
+          if (room.testing)
+            room.testPlayer =
+              room.game.phase === 'discard'
+                ? Number(Object.keys(room.game.discard)[0])
+                : room.game.active;
         } catch (error) {
           if (error instanceof RuleError) throw new ServiceError(error.message);
           throw error;
@@ -464,7 +552,7 @@ export class CatanStore {
     });
   }
   private async recordResults(room: Room) {
-    if (this.hosting === 'local' || room.hosting === 'local') return;
+    if (room.testing || this.hosting === 'local' || room.hosting === 'local') return;
     const game = room.game!;
     for (const [i, p] of game.players.entries()) {
       const seat = room.seats.find((s) => s.id === p.id)!;

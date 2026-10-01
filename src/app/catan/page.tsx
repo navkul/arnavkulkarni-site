@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { testingAvailable } from '@/lib/catan/testing-mode';
 import CatanApp from '@/components/catan/catan-app';
 import './catan.css';
 import { localAvailable, offlineOnly } from '@/lib/catan/server';
@@ -18,6 +19,7 @@ export default async function CatanPage({
       initialHosting={hosting === 'local' || offlineOnly() ? 'local' : 'server'}
       localAvailable={localAvailable()}
       localOnly={offlineOnly()}
+      testingAvailable={testingAvailable()}
     />
   );
 }

@@ -8,7 +8,8 @@ import {
   tradeRatio,
 } from './engine.ts';
 import { cardCount, RESOURCES, type Development } from './types.ts';
-import { owns, type Identity, type Room } from './store.ts';
+import { owns, controlledSeat, type Identity, type Room } from './store.ts';
+import { testingAvailable } from './testing-mode.ts';
 
 export function roomSummary(room: Room, identity: Identity) {
   return {
@@ -24,7 +25,8 @@ export function roomSummary(room: Room, identity: Identity) {
   };
 }
 export function roomView(room: Room, identity: Identity) {
-  const seat = room.seats.find((s) => owns(identity, s));
+  const owner = room.seats.find((s) => owns(identity, s));
+  const seat = controlledSeat(room, identity);
   const player = room.game?.players.findIndex((p) => p.id === seat?.id) ?? -1;
   const game = room.game;
   const self = player >= 0 ? game?.players[player] : undefined;
@@ -41,7 +43,8 @@ export function roomView(room: Room, identity: Identity) {
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     finishedAt: room.finishedAt,
-    isHost: !!seat && seat.id === room.host,
+    isHost: !!owner && owner.id === room.host,
+    testing: !!room.testing && testingAvailable(),
     joined: !!seat,
     me: player,
     seats: room.seats.map((s) => ({
@@ -127,12 +130,12 @@ export function roomView(room: Room, identity: Identity) {
           }
         : undefined,
     odds: seat ? room.odds : undefined,
-    canEnd: !!seat && seat.id === room.host && ['playing', 'paused'].includes(room.status),
+    canEnd: !!owner && owner.id === room.host && ['playing', 'paused'].includes(room.status),
     canPause:
-      (!!seat?.profileId || (room.hosting === 'local' && seat?.id === room.host)) &&
+      (!!seat?.profileId || (room.hosting === 'local' && owner?.id === room.host)) &&
       room.status === 'playing',
     canResume:
-      (!!seat?.profileId || (room.hosting === 'local' && seat?.id === room.host)) &&
+      (!!seat?.profileId || (room.hosting === 'local' && owner?.id === room.host)) &&
       room.status === 'paused',
   };
 }

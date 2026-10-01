@@ -460,3 +460,24 @@ test('illustrated cards, table-wide trades and host end-game controls synchroniz
     for (const guest of guests) await guest.close();
   }
 });
+
+test('production hides solo testing and rejects both test-only commands', async ({ page }) => {
+  await page.goto('/catan');
+  await expect(page.getByRole('button', { name: 'Start test game', exact: true })).toHaveCount(0);
+  for (const command of ['create-test', 'test-player']) {
+    const response = await page.request.post(`${origin}/api/catan?hosting=local`, {
+      headers: { origin },
+      data: {
+        command,
+        name: 'Forbidden test',
+        guestName: 'Guest',
+        capacity: 4,
+        code: 'ABCDEF',
+        revision: 0,
+        player: 1,
+      },
+    });
+    expect(response.status()).toBe(403);
+    expect((await response.json()).error).toContain('local development');
+  }
+});
