@@ -3,23 +3,30 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { AwardCard } from './cards';
 import { PLAYER_COLORS } from '@/lib/catan/types';
 import type { RoomView } from '@/lib/catan/view';
+import { AWARD_DURATION_MS, DICE_DURATION_MS, DICE_VISIBLE_MS } from '@/lib/catan/motion-timing';
 
 export function useTableClock(serverNow: number, animateUntil: number) {
-  const [clock, setClock] = useState(() => Date.now());
-  const [sync, setSync] = useState(() => ({ serverNow, local: Date.now() }));
-  if (sync.serverNow !== serverNow) setSync({ serverNow, local: clock });
+  const [clock, setClock] = useState(serverNow);
   useEffect(() => {
+    const receivedAt = performance.now();
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
-      const localNow = Date.now();
-      setClock(localNow);
-      const time = sync.serverNow + localNow - sync.local;
-      timer = setTimeout(tick, time < animateUntil ? 32 : 500);
+      const time = serverNow + performance.now() - receivedAt;
+      setClock(time);
+      // CSS and Three.js advance on their own render clocks; React only updates phase boundaries.
+      timer = setTimeout(tick, time < animateUntil && !document.hidden ? 100 : 500);
     };
-    timer = setTimeout(tick, 32);
+    timer = setTimeout(tick, 0);
     return () => clearTimeout(timer);
-  }, [animateUntil, sync]);
-  return sync.serverNow + Math.max(0, clock - sync.local);
+  }, [animateUntil, serverNow]);
+  return Math.max(serverNow, clock);
+}
+
+/** Capture the server timeline once; letting CSS run avoids repainting/re-seeking every React tick. */
+export function useAnimationDelay(at: number, now: number) {
+  const [start, setStart] = useState({ at, delay: at - now });
+  if (start.at !== at) setStart({ at, delay: at - now });
+  return start.at === at ? start.delay : at - now;
 }
 const rotations: Record<number, string> = {
   1: 'rotateX(0deg) rotateY(0deg)',
@@ -39,7 +46,12 @@ const pips: Record<number, number[]> = {
 };
 export function TableDice({ room, now }: { room: RoomView; now: number }) {
   const event = room.diceEvent;
-  if (!event || now < event.at || now > event.at + 6500) return null;
+  if (!event || now < event.at || now > event.at + DICE_VISIBLE_MS) return null;
+  return <DiceStage key={event.id} room={room} now={now} />;
+}
+function DiceStage({ room, now }: { room: RoomView; now: number }) {
+  const event = room.diceEvent!;
+  const delay = useAnimationDelay(event.at, now);
   const player = room.game!.players.find((p) => p.id === event.playerId)!;
   return (
     <div
@@ -50,7 +62,9 @@ export function TableDice({ room, now }: { room: RoomView; now: number }) {
       style={
         {
           '--dice-color': PLAYER_COLORS[event.color],
-          '--elapsed': `${-(now - event.at)}ms`,
+          '--elapsed': `${delay}ms`,
+          '--dice-duration': `${DICE_DURATION_MS}ms`,
+          '--dice-caption-duration': `${DICE_DURATION_MS + 150}ms`,
         } as CSSProperties
       }
     >
@@ -83,7 +97,12 @@ export function AwardFlight({
   event: RoomView['awardEvents'][number];
   now: number;
 }) {
+  if (now < event.at || now >= event.at + AWARD_DURATION_MS) return null;
+  return <AwardTransfer key={event.id} event={event} now={now} />;
+}
+function AwardTransfer({ event, now }: { event: RoomView['awardEvents'][number]; now: number }) {
   const [flight, setFlight] = useState<{ x: number; y: number; dx: number; dy: number }>();
+  const delay = useAnimationDelay(event.at, now);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const source = document
@@ -97,7 +116,7 @@ export function AwardFlight({
     });
     return () => cancelAnimationFrame(frame);
   }, [event.kind, event.playerId]);
-  if (!flight || now < event.at || now >= event.at + 2600) return null;
+  if (!flight) return null;
   return (
     <div
       className="ct-award-flight"
@@ -107,7 +126,8 @@ export function AwardFlight({
           top: flight.y,
           '--dx': `${flight.dx}px`,
           '--dy': `${flight.dy}px`,
-          animationDelay: `${-(now - event.at)}ms`,
+          animationDelay: `${delay}ms`,
+          '--motion-duration': `${AWARD_DURATION_MS}ms`,
         } as CSSProperties
       }
     >

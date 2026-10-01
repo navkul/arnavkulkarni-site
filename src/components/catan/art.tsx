@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { Development, Resource } from '@/lib/catan/types';
 
 /** Original SVG illustrations; bundled with the app for offline play. */
@@ -26,8 +26,8 @@ export function TerrainArt({ kind }: { kind: Resource | 'desert' }) {
           patternUnits="userSpaceOnUse"
           patternTransform="rotate(-12)"
         >
-          <path d="M1 2h2M7 9h1M4 12h2" stroke="#fff9da" strokeWidth=".7" opacity=".45" />
-          <path d="M3 6h1M9 3h1" stroke="#354f42" strokeWidth=".5" opacity=".3" />
+          <path d="M1 2h2M7 9h1M4 12h2" stroke="#fff9da" strokeWidth=".7" opacity=".25" />
+          <path d="M3 6h1M9 3h1" stroke="#354f42" strokeWidth=".5" opacity=".16" />
         </pattern>
       </defs>
       <rect x="-70" y="-70" width="140" height="140" fill={`url(#${ink}-sky)`} />
@@ -184,155 +184,473 @@ export function TerrainArt({ kind }: { kind: Resource | 'desert' }) {
   );
 }
 
-export function DevelopmentArt({ kind }: { kind: Development | 'back' }) {
-  const colors = {
-    knight: '#597c86',
-    roads: '#bb7755',
-    plenty: '#8c9d57',
-    monopoly: '#a3894b',
-    victory: '#8a7694',
-    back: '#285d64',
-  };
+/** An original miniature-print treatment shared by both decks. */
+export function IllustratedCard({
+  title,
+  category,
+  accent,
+  children,
+  footer,
+}: {
+  title: string;
+  category: string;
+  accent: string;
+  children: ReactNode;
+  footer?: string;
+}) {
+  const id = useId();
   return (
-    <svg viewBox="0 0 120 150" aria-hidden="true" className="ct-card-art">
+    <svg viewBox="0 0 120 150" aria-hidden="true" className="ct-card-art ct-illustrated-card">
+      <defs>
+        <linearGradient id={`${id}-stock`} x2="1" y2="1">
+          <stop stopColor="#fffdf4" />
+          <stop offset=".5" stopColor="#f3ebd6" />
+          <stop offset="1" stopColor="#d9c9a5" />
+        </linearGradient>
+        <linearGradient id={`${id}-foil`} x2="1" y2="1">
+          <stop stopColor="#d7b75d" />
+          <stop offset=".45" stopColor="#fff0bd" />
+          <stop offset="1" stopColor="#957334" />
+        </linearGradient>
+        <clipPath id={`${id}-window`}>
+          <path d="M12 32Q60 24 108 32V115Q60 123 12 115Z" />
+        </clipPath>
+        <pattern id={`${id}-grain`} width="6" height="7" patternUnits="userSpaceOnUse">
+          <path d="M1 1h.7M4 5h.5" stroke="#704e30" opacity=".1" strokeWidth=".5" />
+        </pattern>
+      </defs>
       <rect
         x="2"
         y="2"
         width="116"
         height="146"
-        rx="9"
-        fill="#faf0d6"
-        stroke="#c4b18b"
-        strokeWidth="2"
+        rx="7"
+        fill={`url(#${id}-stock)`}
+        stroke="#b5a079"
       />
-      <rect x="9" y="9" width="102" height="132" rx="5" fill={colors[kind]} />
-      <path d="M15 115Q60 80 105 115V135H15Z" fill="#172e2b" opacity=".2" />
-      <circle cx="60" cy="66" r="38" fill="#fff2c5" opacity=".13" />
-      <path
-        d="M17 18h16M17 18v16M103 18H87M103 18v16M17 132h16M17 132v-16M103 132H87M103 132v-16"
+      <rect
+        x="5"
+        y="5"
+        width="110"
+        height="140"
+        rx="5"
         fill="none"
-        stroke="#f8dea0"
+        stroke={accent}
+        strokeWidth=".6"
       />
+      <path
+        d="M9 31V10H111V31M9 119V140H111V119"
+        fill="none"
+        stroke={`url(#${id}-foil)`}
+        strokeWidth="1.4"
+      />
+      <text
+        x="60"
+        y="17"
+        textAnchor="middle"
+        fill={accent}
+        fontFamily="Georgia, serif"
+        fontSize="5.3"
+        letterSpacing="2"
+      >
+        {category.toUpperCase()}
+      </text>
+      <text
+        x="60"
+        y="27"
+        textAnchor="middle"
+        fill="#3e3b30"
+        fontFamily="Georgia, serif"
+        fontWeight="700"
+        fontSize={category === 'Resource' ? '12' : title.length > 13 ? '8.8' : '10.2'}
+      >
+        {title}
+      </text>
+      <g clipPath={`url(#${id}-window)`}>{children}</g>
+      <path
+        d="M12 32Q60 24 108 32V115Q60 123 12 115Z"
+        fill="none"
+        stroke={accent}
+        strokeWidth=".75"
+      />
+      <path
+        d="M17 130H34M86 130H103M58 126L62 130 58 134 54 130Z"
+        fill="none"
+        stroke="#aa8b47"
+        strokeWidth=".7"
+      />
+      <text
+        x="60"
+        y="140"
+        textAnchor="middle"
+        fill="#62543b"
+        fontFamily="Georgia, serif"
+        fontSize="5.8"
+      >
+        {footer}
+      </text>
+      <rect
+        x="3"
+        y="3"
+        width="114"
+        height="144"
+        rx="6"
+        fill={`url(#${id}-grain)`}
+        pointerEvents="none"
+      />
+      <path d="M9 7H111M5 12V137" fill="none" stroke="#fffef1" strokeOpacity=".85" />
+      <path d="M9 145H109Q115 145 115 139V12" fill="none" stroke="#8f7955" strokeOpacity=".3" />
+    </svg>
+  );
+}
+
+export function CardBackArt({ resource = false }: { resource?: boolean }) {
+  const id = useId();
+  const color = resource ? '#285c70' : '#294c46';
+  return (
+    <svg viewBox="0 0 120 150" aria-hidden="true" className="ct-card-art ct-card-back">
+      <defs>
+        <linearGradient id={`${id}-back`} x2="1" y2="1">
+          <stop stopColor={color} />
+          <stop offset="1" stopColor="#172f36" />
+        </linearGradient>
+        <pattern id={`${id}-weave`} width="12" height="14" patternUnits="userSpaceOnUse">
+          <path
+            d="M6 0L12 3.5V10.5L6 14 0 10.5V3.5Z"
+            fill="none"
+            stroke="#dcc891"
+            strokeWidth=".5"
+            opacity=".2"
+          />
+        </pattern>
+      </defs>
+      <rect x="2" y="2" width="116" height="146" rx="7" fill="#f5e8c9" stroke="#b5a079" />
+      <rect x="7" y="7" width="106" height="136" rx="4" fill={`url(#${id}-back)`} />
+      <rect
+        x="10"
+        y="10"
+        width="100"
+        height="130"
+        rx="2"
+        fill={`url(#${id}-weave)`}
+        stroke="#b99b59"
+        strokeWidth=".7"
+      />
+      <path
+        d="M17 25V17H30M90 17H103V25M17 125V133H30M90 133H103V125"
+        fill="none"
+        stroke="#e0c680"
+      />
+      <path d="M60 34L96 55V96L60 116 24 96V55Z" fill={color} stroke="#e4cd8d" strokeWidth="1.5" />
+      <path d="M60 39L91 57V92L60 110 29 92V57Z" fill="none" stroke="#d7c285" strokeWidth=".5" />
+      {resource ? (
+        <>
+          <path
+            d="M33 83L48 57 60 78 72 54 88 83"
+            fill="#759589"
+            stroke="#d4c88e"
+            strokeWidth=".8"
+          />
+          <path d="M72 54L65 67 72 64 78 67" fill="#f0ddad" />
+          <path d="M34 89Q48 81 60 89T86 89M40 96Q51 90 62 96T80 95" fill="none" stroke="#e0c888" />
+          <circle cx="45" cy="57" r="4" fill="#ecd392" />
+        </>
+      ) : (
+        <>
+          <path
+            d="M40 89V67L48 57 56 67V89M59 89V54L66 46 73 54V89M75 89V67L81 59 87 67V89Z"
+            fill="#d9c385"
+            stroke="#f5e3b1"
+            strokeWidth=".7"
+          />
+          <path d="M37 91H89M45 96H81M48 72v8M66 61v8M81 73v7" stroke={color} strokeWidth="2" />
+        </>
+      )}
+      <text
+        x="60"
+        y="26"
+        textAnchor="middle"
+        fontFamily="Georgia, serif"
+        fontSize="7.3"
+        fill="#e9d49a"
+        letterSpacing="2"
+      >
+        CATAN
+      </text>
+      <text
+        x="60"
+        y="127"
+        textAnchor="middle"
+        fontFamily="Georgia, serif"
+        fontSize="5.4"
+        fill="#e9d49a"
+        letterSpacing="1.1"
+      >
+        {resource ? 'RESOURCES' : 'DEVELOPMENT'}
+      </text>
+    </svg>
+  );
+}
+
+function DevelopmentScene({ kind }: { kind: Development }) {
+  const id = useId();
+  const sky = {
+    knight: '#abc4bf',
+    roads: '#d4d6b0',
+    plenty: '#dbd5a0',
+    monopoly: '#dec29d',
+    victory: '#afbdce',
+  }[kind];
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-scene`} x2="0" y2="1">
+          <stop stopColor={sky} />
+          <stop offset="1" stopColor="#fbebbe" />
+        </linearGradient>
+      </defs>
+      <rect x="10" y="29" width="100" height="96" fill={`url(#${id}-scene)`} />
+      <circle cx="87" cy="44" r="10" fill="#fff0c3" opacity=".7" />
+      <path d="M10 58Q27 43 44 57T78 53T111 57V120H10Z" fill="#819c86" opacity=".6" />
+      <path d="M10 79Q36 64 57 78T111 72V121H10Z" fill="#657b5a" />
       {kind === 'knight' && (
         <>
-          <path d="M34 108L39 64 60 53 81 64 86 108Z" fill="#c0ccd0" />
-          <path d="M47 61V42Q60 24 74 43V61Z" fill="#e9e6d5" stroke="#324c5a" strokeWidth="2" />
-          <path d="M45 43H77V54H45Z" fill="#3b5660" />
-          <path d="M52 45v7M59 45v7M66 45v7" stroke="#d4dbce" strokeWidth="2" />
-          <path d="M49 35Q50 19 69 24L63 34" fill="#b7503b" />
+          <path d="M26 117L33 77 51 59 72 64 95 116Z" fill="#9b4036" />
+          <path d="M36 92L43 67 68 62 79 79 82 115H35Z" fill="#71818a" stroke="#3a4b52" />
           <path
-            d="M61 70L85 76V94Q76 112 61 118Q44 108 38 94V76Z"
-            fill="#b95039"
-            stroke="#f6df9d"
+            d="M44 65L49 90H69L72 66M51 92L46 113M68 92L73 113"
+            fill="none"
+            stroke="#c7d2c8"
             strokeWidth="3"
           />
-          <path d="M61 78V105M49 90H73" stroke="#f6df9d" strokeWidth="4" />
+          <path d="M44 62V46Q56 29 70 46L72 62 58 70Z" fill="#cfdbce" stroke="#405767" />
+          <path d="M46 47H71V54L57 61 46 55Z" fill="#324750" />
+          <path d="M52 47v8M58 47v9M64 47v7" stroke="#d4d5b5" strokeWidth="1.7" />
+          <path d="M54 39Q52 25 75 32L66 39" fill="#a94838" />
+          <path d="M83 43L87 40 91 43 87 89 83 90Z" fill="#e0e8d5" stroke="#61767c" />
+          <path d="M77 88L94 90M85 90L84 104" stroke="#dbc58c" strokeWidth="3" />
+          <path
+            d="M52 76L72 82 70 102Q65 113 52 119Q37 110 34 101L32 82Z"
+            fill="#a24737"
+            stroke="#e6c47a"
+            strokeWidth="2"
+          />
+          <path d="M52 80V112M37 93H69" stroke="#e6c47a" strokeWidth="4" />
+          <path d="M52 81V112L65 103 68 84Z" fill="#3d2522" opacity=".12" />
         </>
       )}
       {kind === 'roads' && (
         <>
-          <path d="M17 83L40 51 63 70 87 45 105 80V126H17Z" fill="#71905c" />
-          <path d="M23 127Q91 95 64 83T81 36" fill="none" stroke="#f1d397" strokeWidth="19" />
+          <path d="M13 114Q80 102 65 83T82 46" fill="none" stroke="#705941" strokeWidth="21" />
+          <path d="M13 112Q78 101 63 82T82 44" fill="none" stroke="#e0c190" strokeWidth="17" />
           <path
-            d="M23 127Q91 95 64 83T81 36"
+            d="M13 112Q78 101 63 82T82 44"
             fill="none"
-            stroke="#a77e56"
+            stroke="#b5946d"
             strokeWidth="12"
-            strokeDasharray="3 5"
+            strokeDasharray="2 4"
           />
-          <path d="M33 69V36M24 43H52L47 49H24Z" fill="#75472f" stroke="#f0d39d" strokeWidth="2" />
+          <path d="M38 80L77 75V91L38 95Z" fill="#a28c67" stroke="#5e634a" />
+          <path d="M42 91V84Q49 76 55 82V89M59 88V82Q67 75 73 80V86" fill="#4e6954" />
+          <path d="M36 77L76 71 79 77 38 84Z" fill="#dec69b" />
+          <path d="M29 83V51M23 53L47 49 49 54 26 59Z" fill="#b3905e" stroke="#644e34" />
+          <path d="M85 52V38L92 31 102 37V50Z" fill="#e4d7ad" />
+          <path d="M83 39L92 29 104 37Z" fill="#b76244" />
+          <path d="M21 111l-5-9 8 3M91 93l4-11 6 8M89 107l-4-8 10 2" fill="#b4be7a" />
         </>
       )}
       {kind === 'plenty' && (
         <>
           <path
-            d="M27 90Q17 44 55 34Q83 29 84 53Q65 44 53 59Q38 83 78 110Q46 123 27 90Z"
-            fill="#e0b05c"
-            stroke="#fae0a0"
+            d="M21 98Q13 60 38 47Q65 32 86 55Q58 41 47 68Q44 85 74 107Q41 122 21 98Z"
+            fill="#bb8140"
+            stroke="#f8d689"
             strokeWidth="2"
           />
-          <ellipse cx="72" cy="95" rx="24" ry="17" fill="#624b30" />
-          <circle cx="60" cy="91" r="10" fill="#c35d39" />
-          <circle cx="80" cy="93" r="11" fill="#e5b857" />
-          <path d="M68 87Q60 58 80 51Q88 70 68 87M83 89Q86 70 99 73Q102 90 83 89" fill="#83a464" />
           <path
-            d="M42 94Q20 59 40 45M32 72l-9-4M34 64l9-7M36 54l-8-4"
+            d="M28 101Q21 70 43 56M35 106Q27 75 50 57M43 109Q33 81 57 59"
             fill="none"
-            stroke="#f7d88d"
-            strokeWidth="4"
+            stroke="#e5b969"
+            strokeWidth="2"
           />
+          <ellipse cx="72" cy="100" rx="26" ry="16" fill="#69472c" transform="rotate(12 72 100)" />
+          <circle cx="61" cy="96" r="10" fill="#ba5639" />
+          <circle cx="78" cy="104" r="10" fill="#e3a93b" />
+          <path d="M78 94Q78 79 91 78Q101 95 88 106Z" fill="#d5b152" stroke="#f2ce75" />
+          <path
+            d="M62 88Q55 72 62 65Q73 73 69 87M81 83Q87 66 98 74Q96 88 81 90"
+            fill="#809955"
+            stroke="#b5bf75"
+          />
+          {[0, 1, 2].map((i) => (
+            <g key={i} transform={`translate(${29 + i * 9} ${96 - i * 4}) rotate(${-18 + i * 14})`}>
+              <path d="M0 9V-25" stroke="#f6d384" strokeWidth="2" />
+              {[-20, -12, -4].map((y) => (
+                <path key={y} d={`M0 ${y}q-12-9-6-12q7 3 6 12q10-12 8-4q-2 5-8 7`} fill="#f0cc76" />
+              ))}
+            </g>
+          ))}
+          <path d="M89 114Q101 108 101 96" fill="none" stroke="#607345" strokeWidth="3" />
         </>
       )}
       {kind === 'monopoly' && (
         <>
-          <path d="M27 106V68H93V106Z" fill="#e1c48b" />
-          <path d="M22 68L60 37 98 68Z" fill="#754c38" stroke="#f0dca5" strokeWidth="2" />
-          {[36, 53, 70, 87].map((x) => (
-            <path key={x} d={`M${x} 74V100`} stroke="#846748" strokeWidth="5" />
-          ))}
-          <path d="M22 107H98V114H22Z" fill="#f5dca2" />
-          {[32, 48, 67, 84].map((x, i) => (
+          <path d="M14 110V80L34 68 52 80V111M70 109V75L87 64 108 79V112" fill="#c7ad7b" />
+          <path d="M27 115V62H92V115Z" fill="#e2cfa5" stroke="#917248" />
+          <path d="M22 64L60 38 97 64Z" fill="#9b5840" stroke="#e9c98e" strokeWidth="2" />
+          <path d="M29 62L60 44 89 62" fill="none" stroke="#c78659" />
+          {[35, 50, 70, 85].map((x) => (
             <g key={x}>
-              <ellipse cx={x} cy={123 - (i % 2) * 4} rx="10" ry="4" fill="#bc8538" />
-              <ellipse
-                cx={x}
-                cy={119 - (i % 2) * 4}
-                rx="10"
-                ry="4"
-                fill="#f4cf65"
-                stroke="#ab813a"
-              />
+              <path d={`M${x} 70V104`} stroke="#a78e65" strokeWidth="6" />
+              <path d={`M${x - 2} 70V104`} stroke="#f0d8a5" strokeWidth="2" />
             </g>
           ))}
-          <circle cx="60" cy="56" r="7" fill="#e6ba57" />
+          <path
+            d="M23 106H97V111H23ZM19 112H101V118H19Z"
+            fill="#e9d09a"
+            stroke="#9c7b4b"
+            strokeWidth=".7"
+          />
+          <path d="M56 78Q60 72 64 78V103H56Z" fill="#695746" />
+          <circle cx="60" cy="57" r="5" fill="#e6c06b" stroke="#744b33" />
+          {[32, 47, 80, 90].map((x, i) => (
+            <g key={x} transform={`translate(${x} ${117 - (i % 2) * 5})`}>
+              <path d="M-7-6V0Q0 6 7 0V-6" fill="#be8a35" />
+              <ellipse cy="-6" rx="7" ry="3" fill="#f2d581" stroke="#8e6e33" strokeWidth=".6" />
+            </g>
+          ))}
         </>
       )}
       {kind === 'victory' && (
         <>
-          <path d="M32 115V60H48V45H72V60H88V115Z" fill="#ebdbc0" />
-          <path d="M28 60L40 39 52 60M44 45L60 22 76 45M68 60L80 39 92 60" fill="#bd8159" />
+          <path d="M18 116L23 111H98L105 118Z" fill="#adab83" />
+          <path d="M26 111V71H43V60H53V47H71V62H81V75H96V112Z" fill="#e9ddba" stroke="#9b9174" />
           <path
-            d="M54 115V91Q60 80 66 91V115M38 73v10M80 73v10M60 54v14"
-            stroke="#73616f"
-            strokeWidth="5"
+            d="M23 73L34 57 46 73M41 62L53 49 63 62M48 48L61 29 76 48M68 64L79 47 91 64M81 76L90 62 102 76"
+            fill="#a95642"
+            stroke="#d89d73"
           />
+          <path d="M59 30V20M59 20L72 23 59 27" stroke="#8c7352" fill="#d8b651" />
+          <path d="M54 112V92Q62 77 70 92V112Z" fill="#756b5c" />
           <path
-            d="M26 123Q15 101 22 83M94 123Q105 101 98 83"
-            fill="none"
-            stroke="#d9b96a"
+            d="M32 80V88M43 85V93M61 55V65M79 71V80M89 85V93"
+            stroke="#738285"
             strokeWidth="3"
           />
-          <path d="M60 14v-6M33 22l-5-6M86 22l5-6" stroke="#f9de94" strokeWidth="2" />
+          <path d="M29 98H49M73 99H94M49 76H75M30 107H48" stroke="#b5a785" strokeWidth=".7" />
+          <path
+            d="M21 113Q10 96 18 80M102 113Q112 96 104 80"
+            fill="none"
+            stroke="#d8b459"
+            strokeWidth="2"
+          />
+          {[0, 1, 2, 3].map((i) => (
+            <g key={i}>
+              <ellipse
+                cx={17 + (i % 2) * 2}
+                cy={87 + i * 7}
+                rx="3"
+                ry="6"
+                fill="#e9cc7b"
+                transform={`rotate(-30 ${17 + (i % 2) * 2} ${87 + i * 7})`}
+              />
+              <ellipse
+                cx={106 - (i % 2) * 2}
+                cy={87 + i * 7}
+                rx="3"
+                ry="6"
+                fill="#e9cc7b"
+                transform={`rotate(30 ${106 - (i % 2) * 2} ${87 + i * 7})`}
+              />
+            </g>
+          ))}
         </>
       )}
-      {kind === 'back' && (
-        <>
-          <path d="M60 29L96 49V91L60 113 24 91V49Z" fill="none" stroke="#e7d49c" strokeWidth="2" />
-          <path d="M35 92L48 59 58 76 70 48 88 92Z" fill="#96b4a0" />
-          <path d="M70 48L62 68 70 63 78 69Z" fill="#f4dfb0" />
-          <path d="M60 17v8M60 117v12M12 70h9M99 70h9" stroke="#ecd9a2" />
-          <circle cx="42" cy="48" r="6" fill="#ecd9a2" />
-        </>
-      )}
-    </svg>
+    </>
+  );
+}
+
+export function DevelopmentArt({ kind }: { kind: Development | 'back' }) {
+  if (kind === 'back') return <CardBackArt />;
+  const names = {
+    knight: 'Knight',
+    roads: 'Road building',
+    plenty: 'Year of plenty',
+    monopoly: 'Monopoly',
+    victory: 'Victory point',
+  };
+  const effects = {
+    knight: 'Move the robber · Steal 1',
+    roads: 'Build 2 roads for free',
+    plenty: 'Take 2, or remaining supply',
+    monopoly: 'Take all of 1 resource type',
+    victory: '1 hidden victory point',
+  };
+  const colors = {
+    knight: '#4d6e77',
+    roads: '#94613d',
+    plenty: '#65763c',
+    monopoly: '#93662f',
+    victory: '#6d6681',
+  };
+  return (
+    <IllustratedCard
+      title={names[kind]}
+      category={kind === 'victory' ? 'Victory' : kind === 'knight' ? 'Knight' : 'Progress'}
+      accent={colors[kind]}
+      footer={effects[kind]}
+    >
+      <DevelopmentScene kind={kind} />
+    </IllustratedCard>
+  );
+}
+
+export function AwardArt({ kind }: { kind: 'longestRoad' | 'largestArmy' }) {
+  const road = kind === 'longestRoad';
+  return (
+    <IllustratedCard
+      title={road ? 'Longest road' : 'Largest army'}
+      category="Special award"
+      accent="#987838"
+      footer={road ? '5+ connected roads · 2 points' : '3+ played knights · 2 points'}
+    >
+      <DevelopmentScene kind={road ? 'roads' : 'knight'} />
+      <path d="M81 92L103 92V112L92 120 81 112Z" fill="#e6c674" stroke="#fff0bc" />
+      <text
+        x="92"
+        y="110"
+        textAnchor="middle"
+        fontFamily="Georgia, serif"
+        fontSize="16"
+        fill="#67502a"
+        fontWeight="700"
+      >
+        2
+      </text>
+    </IllustratedCard>
   );
 }
 
 export function PortArt() {
   return (
-    <g aria-hidden="true">
-      <ellipse cy="12" rx="23" ry="6" fill="#173f49" opacity=".25" />
+    <g aria-hidden="true" strokeLinejoin="round">
+      <ellipse cy="13" rx="25" ry="7" fill="#173f49" opacity=".22" />
       <path
-        d="M-25 13Q-13 17-2 13T25 13M-17 19Q-5 23 9 19"
+        d="M-27 13Q-16 18-3 14T27 14M-21 19Q-8 24 9 20M-12 25Q0 28 16 24"
         fill="none"
-        stroke="#b7d3ca"
-        strokeWidth="1.5"
+        stroke="#c6e0d5"
+        strokeWidth="1.2"
       />
-      <path d="M-22 3H24L15 13H-13Z" fill="#784e35" stroke="#e3bf86" strokeWidth="1.5" />
-      <path d="M0-29V5" stroke="#e6c692" strokeWidth="2" />
-      <path d="M-3-27L-20 0H-3Z" fill="#fff1cc" />
-      <path d="M3-24L20 0H3Z" fill="#ded2ab" />
-      <path d="M1-30L13-27 1-23Z" fill="#c65f42" />
+      <path d="M-23 3L-16 13 14 15 25 3Z" fill="#70482f" stroke="#ddb779" strokeWidth="1.2" />
+      <path d="M-18 7L19 8M-13 11L15 12" stroke="#af8050" strokeWidth=".7" />
+      <path d="M-23 3Q0 8 25 3L22 0Q0 4-21 0Z" fill="#dbb67b" stroke="#75543b" strokeWidth=".6" />
+      <path d="M0-31V5" stroke="#976b42" strokeWidth="2.2" />
+      <path d="M-2-27Q-13-14-21-1L-3 0Z" fill="#fff2ce" stroke="#bba578" strokeWidth=".65" />
+      <path d="M3-24Q16-15 22 0H3Z" fill="#e4d8b1" stroke="#bba578" strokeWidth=".65" />
+      <path d="M-4-23L-7-3M5-21L9-2" stroke="#cfbe91" strokeWidth=".7" />
+      <path d="M1-31L14-28 1-24Z" fill="#b9553c" />
+      <path d="M0-29L-22 3M2-27L24 3" stroke="#a08d6a" strokeWidth=".45" />
+      <path d="M-9 2V-2H-4V3M7 3V-1H12V3" fill="#aa7045" stroke="#e3c48c" strokeWidth=".6" />
     </g>
   );
 }

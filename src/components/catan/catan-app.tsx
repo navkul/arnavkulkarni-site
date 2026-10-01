@@ -1,13 +1,14 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
+import LandingScene, { LandingShip } from './landing-scene';
+import { PlayerAvatar } from './avatar';
 import GameTable from './game-table';
 import SettingHelp from './setting-help';
 import { PLAYER_COLORS, PLAYER_COLOR_NAMES } from '@/lib/catan/types';
 import type { Action } from '@/lib/catan/types';
 import type { RoomSummary, RoomView } from '@/lib/catan/view';
-import type { CatanStore, Odds } from '@/lib/catan/store';
+import type { Odds } from '@/lib/catan/store';
 
 interface Bootstrap {
   hosting: 'server' | 'local';
@@ -15,8 +16,14 @@ interface Bootstrap {
   user: { name: string | null; registered: boolean; canRegister: boolean };
   rooms: RoomSummary[];
 }
-type Leaderboard = Awaited<ReturnType<CatanStore['leaderboard']>>;
-type Profile = Awaited<ReturnType<CatanStore['profile']>>;
+class RequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 async function request<T>(hosting: 'server' | 'local', query = '', body?: unknown): Promise<T> {
   const params = new URLSearchParams(query);
   params.set('hosting', hosting);
@@ -31,7 +38,8 @@ async function request<T>(hosting: 'server' | 'local', query = '', body?: unknow
       : {}),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? 'Request failed. Please try again.');
+  if (!res.ok)
+    throw new RequestError(data.error ?? 'Request failed. Please try again.', res.status);
   return data as T;
 }
 export default function CatanApp({
@@ -47,8 +55,17 @@ export default function CatanApp({
   localOnly?: boolean;
   testingAvailable?: boolean;
 }) {
-  const [selfHost, setSelfHost] = useState(initialHosting === 'local');
-  const hosting = selfHost && localAvailable ? 'local' : 'server';
+  const basePath = '/catan';
+  const [selfHost, setSelfHost] = useState(
+    localOnly || (initialHosting === 'local' && !initialCode),
+  );
+  const [code, setCode] = useState(initialCode);
+  const [roomHosting, setRoomHosting] = useState(
+    initialCode === 'TESTING' ? 'server' : initialHosting,
+  );
+  const lobbyHosting = selfHost && localAvailable ? 'local' : 'server';
+  // A development test table uses the local store without changing the host's settings.
+  const hosting = code ? roomHosting : lobbyHosting;
   const api = useCallback(
     <T,>(query = '', body?: unknown) => request<T>(hosting, query, body),
     [hosting],
@@ -57,59 +74,96 @@ export default function CatanApp({
   const [findLocal, setFindLocal] = useState(false);
   const [bootstrap, setBootstrap] = useState<Bootstrap>();
   const [room, setRoom] = useState<RoomView>();
-  const [code, setCode] = useState(initialCode);
   const [history, setHistory] = useState<Odds[]>([]);
-  const [tab, setTab] = useState<'play' | 'profile'>('play');
-  const [leaderboard, setLeaderboard] = useState<Leaderboard>();
-  const [profile, setProfile] = useState<Profile>();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [offline, setOffline] = useState(false);
-  const [auth, setAuth] = useState<'login' | 'register'>();
   const [guestName, setGuestName] = useState(''),
     [roomName, setRoomName] = useState(''),
     [capacity, setCapacity] = useState(4),
     [joinCode, setJoinCode] = useState('');
-  const [profileName, setProfileName] = useState(''),
-    [password, setPassword] = useState('');
   const [copied, setCopied] = useState(false);
   const currentCode = useRef(code);
   currentCode.current = code;
+  const currentRoom = useRef(room);
+  currentRoom.current = room;
   const sequence = useRef(0);
-  const refresh = useCallback(async () => {
-    const ticket = ++sequence.current;
-    try {
-      const data = await api<Bootstrap>();
-      if (ticket !== sequence.current) return;
-      setBootstrap(data);
-      setOffline(false);
-      if (code) {
-        const result = await api<{ room: RoomView; history: Odds[] }>(
-          `?room=${encodeURIComponent(code)}`,
-        );
-        if (currentCode.current !== code || ticket !== sequence.current) return;
-        setRoom((previous) =>
-          previous?.code === code && previous.revision > result.room.revision
-            ? previous
-            : result.room,
-        );
-        setHistory(result.history);
+  const mutationPending = useRef(false);
+  const refresh = useCallback(
+    async (background = false) => {
+      const ticket = ++sequence.current;
+      try {
+        const data = !background || !code ? await api<Bootstrap>() : undefined;
+        if (ticket !== sequence.current) return;
+        if (data) setBootstrap(data);
+        setOffline(false);
+        if (code) {
+          if (code === 'TESTING') {
+            const result = await api<{ room: RoomView }>('', { command: 'open-practice' });
+            if (currentCode.current !== code || ticket !== sequence.current) return;
+            currentCode.current = result.room.code;
+            setCode(result.room.code);
+            setRoom(result.room);
+            setHistory([]);
+            window.history.replaceState(null, '', `/catan?room=${result.room.code}`);
+            return;
+          }
+          const result = await api<{ room: RoomView; history: Odds[] }>(
+            `?room=${encodeURIComponent(code)}`,
+          );
+          if (currentCode.current !== code || ticket !== sequence.current) return;
+          setRoom((previous) =>
+            previous?.code === code && previous.revision > result.room.revision
+              ? previous
+              : result.room,
+          );
+          setHistory(result.history);
+        }
+      } catch (err) {
+        if (ticket !== sequence.current) return;
+        if (err instanceof RequestError && err.status === 404 && code) {
+          currentCode.current = '';
+          setCode('');
+          setRoom(undefined);
+          setHistory([]);
+          setOffline(false);
+          window.history.replaceState(
+            null,
+            '',
+            lobbyHosting === 'local' ? '/catan?hosting=local' : '/catan',
+          );
+          setError('This table is no longer available. Open or join another table.');
+        } else if (
+          err instanceof RequestError &&
+          err.status === 503 &&
+          testingAvailable &&
+          hosting === 'server' &&
+          !code
+        ) {
+          setOffline(false);
+          setError(
+            'Online tables need a database. Use Open test table to test locally — no Self-host setting needed.',
+          );
+        } else {
+          setOffline(true);
+          setError((err as Error).message);
+        }
       }
-      if (tab === 'play' && !code && hosting === 'server')
-        setLeaderboard(await api<Leaderboard>('?leaderboard'));
-      if (tab === 'profile' && data.user.registered) setProfile(await api<Profile>('?profile'));
-    } catch (err) {
-      setOffline(true);
-      setError((err as Error).message);
-    }
-  }, [code, tab, api, hosting]);
+    },
+    [code, api, hosting, lobbyHosting, testingAvailable],
+  );
   useEffect(() => {
     const seq = sequence;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
+    let initial = true;
     const poll = async () => {
-      await refresh();
-      if (!disposed) timer = setTimeout(poll, 1800);
+      if (!mutationPending.current) {
+        await refresh(!initial);
+        initial = false;
+      }
+      if (!disposed)
+        timer = setTimeout(poll, document.hidden ? 5000 : currentRoom.current?.game ? 400 : 1800);
     };
     void poll();
     return () => {
@@ -120,19 +174,22 @@ export default function CatanApp({
   }, [refresh]);
   function openRoom(next: string, nextHosting = hosting) {
     setCode(next);
+    setRoomHosting(nextHosting);
     currentCode.current = next;
     setRoom(undefined);
     setHistory([]);
-    setTab('play');
     setError('');
     setCopied(false);
     const params = new URLSearchParams();
     if (next) params.set('room', next);
-    if (nextHosting === 'local') params.set('hosting', 'local');
-    window.history.replaceState(null, '', `/catan${params.size ? '?' + params : ''}`);
+    if ((next ? nextHosting : lobbyHosting) === 'local') params.set('hosting', 'local');
+    window.history.replaceState(null, '', `${basePath}${params.size ? '?' + params : ''}`);
   }
   async function run(fn: () => Promise<void>, refreshAfter = true) {
-    if (busy) return;
+    if (busy || mutationPending.current) return;
+    mutationPending.current = true;
+    // An older poll must not replace the result of this command or its account refresh.
+    sequence.current++;
     setBusy(true);
     setError('');
     try {
@@ -141,13 +198,14 @@ export default function CatanApp({
     } catch (err) {
       setError((err as Error).message);
     } finally {
+      mutationPending.current = false;
       setBusy(false);
     }
   }
   async function command(command: string, action?: Action) {
     if (!room) return;
     await run(async () => {
-      const result = await api<{ room: RoomView | null }>('', {
+      const body = {
         command,
         code: room.code,
         revision: room.revision,
@@ -155,87 +213,56 @@ export default function CatanApp({
         ...(['approve-pause', 'decline-pause'].includes(command)
           ? { pauseRequestId: room.pauseRequest?.id }
           : {}),
-      });
+      };
+      let result: { room: RoomView | null };
+      try {
+        result = await api('', body);
+      } catch (error) {
+        if (
+          !(error instanceof RequestError) ||
+          error.status !== 409 ||
+          !['pause', 'resume', 'approve-pause', 'decline-pause'].includes(command)
+        )
+          throw error;
+        const fresh = await api<{ room: RoomView }>(`?room=${room.code}`);
+        setRoom(fresh.room);
+        // These table-management intents survive another player's move. Votes retain their
+        // original request ID, so they cannot accidentally approve a different pause request.
+        result = await api('', { ...body, revision: fresh.room.revision });
+      }
       if (command === 'leave' || !result.room) openRoom('');
       else setRoom(result.room);
-    });
+    }, false);
   }
   const user = bootstrap?.user;
-  const enterProfile = () =>
-    void run(async () => {
-      if (!auth) return;
-      await api('', { command: auth, name: profileName, password });
-      setPassword('');
-      setAuth(undefined);
-      setRoom(undefined);
-    });
-  const nameAccount = guestName.trim() && !user?.registered && hosting === 'server' && (
-    <details className="ct-name-account">
-      <summary>Use a profile</summary>
-      <div
-        className="ct-name-dropdown"
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && auth) {
-            e.preventDefault();
-            if (profileName && password) enterProfile();
-          }
-        }}
-      >
-        <div className="ct-action-row">
-          <button type="button" className="ct-text-button" onClick={() => setAuth('login')}>
-            Sign in
-          </button>
-          {user?.canRegister && (
-            <button type="button" className="ct-text-button" onClick={() => setAuth('register')}>
-              Create profile
-            </button>
-          )}
-        </div>
-        {auth && (
-          <>
-            <input
-              aria-label="Profile name"
-              autoComplete="username"
-              placeholder="Profile name"
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-            />
-            <input
-              aria-label="Password"
-              type="password"
-              autoComplete={auth === 'register' ? 'new-password' : 'current-password'}
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <button type="button" disabled={busy} className="ct-primary" onClick={enterProfile}>
-              {auth === 'register' ? 'Create profile' : 'Sign in to profile'}
-            </button>
-          </>
-        )}
-      </div>
-    </details>
-  );
+  const profileParams = new URLSearchParams();
+  if (hosting === 'local') profileParams.set('hosting', 'local');
+  if (code && room && !['finished', 'ended'].includes(room.status))
+    profileParams.set('table', code);
+  const profileHref = `/catan/profile${profileParams.size ? `?${profileParams}` : ''}`;
   return (
-    <main className={`ct-app${code ? ' ct-in-game' : ''}`}>
+    <main
+      className={`ct-app${code ? ' ct-in-game' : ' ct-harbor'}${room?.game ? ' ct-playing' : ''}${room?.game && ['ended', 'finished'].includes(room.status) ? ' ct-detail-view' : ''}`}
+    >
       <header className="ct-header">
         <Link href="/" className="ct-back">
           ← Home
         </Link>
         <div className="ct-account-actions">
-          {hosting === 'local' ? (
-            <span className="ct-muted">Local · unranked</span>
-          ) : user?.registered ? (
-            <button
-              className="ct-text-button"
-              onClick={() => {
-                setTab('profile');
-                setAuth(undefined);
-              }}
+          {hosting === 'local' && <span className="ct-muted">Local · unranked</span>}
+          <Link href={profileHref} className="ct-profile-entry">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
             >
-              {user.name}
-            </button>
-          ) : null}
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M5 21v-2a7 7 0 0 1 14 0v2" />
+            </svg>
+            {user?.registered ? user.name || 'My profile' : 'Sign in / Sign up'}
+          </Link>
         </div>
       </header>
       {error && (
@@ -251,75 +278,11 @@ export default function CatanApp({
           Connection lost. Reconnecting…
         </p>
       )}
-      {auth && (tab === 'profile' || !!room?.game) && (
-        <section className="ct-panel ct-auth">
-          <div className="ct-section-heading">
-            <h2>{auth === 'register' ? 'Create profile' : 'Sign in'}</h2>
-            <button onClick={() => setAuth(undefined)} aria-label="Close account form">
-              ×
-            </button>
-          </div>
-          <p>
-            {auth === 'register'
-              ? 'Save your completed game to a profile. Your name and aggregate stats will appear on the public leaderboard.'
-              : 'Sign in to restore your games and see your statistics.'}
-          </p>
-          <form
-            className="ct-inline-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void run(async () => {
-                await api('', { command: auth, name: profileName, password });
-                setPassword('');
-                setAuth(undefined);
-                setRoom(undefined);
-              });
-            }}
-          >
-            <label>
-              Profile name
-              <input
-                autoComplete="username"
-                value={profileName}
-                minLength={2}
-                maxLength={24}
-                required
-                onChange={(e) => setProfileName(e.target.value)}
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                autoComplete={auth === 'register' ? 'new-password' : 'current-password'}
-                minLength={auth === 'register' ? 10 : undefined}
-                maxLength={128}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-            <button className="ct-primary" disabled={busy}>
-              {auth === 'register' ? 'Create profile & save stats' : 'Sign in'}
-            </button>
-          </form>
-        </section>
-      )}
-      {tab === 'play' && !code && (
-        <>
-          <h1 className="ct-page-title ct-logo-heading">
-            <Image
-              src="/catan/catan-logo.svg"
-              alt=""
-              width={160}
-              height={64}
-              className="ct-official-logo"
-              priority
-            />
-            <span>CATAN</span>
-          </h1>
+      {!code && (
+        <LandingScene>
           <div className="ct-lobby-grid">
             <section className="ct-lobby-section">
+              <LandingShip side="start" />
               <h2>Start a table</h2>
               <form
                 onSubmit={(e) => {
@@ -346,6 +309,11 @@ export default function CatanApp({
                     minLength={2}
                     maxLength={24}
                     placeholder="Table name"
+                    name="table-name"
+                    autoComplete="off"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-form-type="other"
                     required
                   />
                 </label>
@@ -355,7 +323,6 @@ export default function CatanApp({
                     value={user?.registered ? (user.name ?? '') : guestName}
                     onChange={(e) => {
                       setGuestName(e.target.value);
-                      setProfileName(e.target.value);
                     }}
                     readOnly={user?.registered}
                     minLength={2}
@@ -365,7 +332,6 @@ export default function CatanApp({
                     required
                   />
                 </label>
-                {nameAccount}
                 <details className="ct-settings">
                   <summary>Settings</summary>
                   <div className="ct-setting-row">
@@ -424,12 +390,11 @@ export default function CatanApp({
                           window.history.replaceState(
                             null,
                             '',
-                            e.target.checked ? '/catan?hosting=local' : '/catan',
+                            e.target.checked ? `${basePath}?hosting=local` : basePath,
                           );
                         setFindLocal(false);
                         setError('');
                         setBootstrap(undefined);
-                        setAuth(undefined);
                       }}
                     />
                   </div>
@@ -466,29 +431,29 @@ export default function CatanApp({
                           guestName: guestName.trim() || 'You',
                           capacity,
                         });
-                        setSelfHost(true);
                         setBootstrap(undefined);
                         setOffline(false);
-                        setAuth(undefined);
                         openRoom(result.room.code, 'local');
                         setRoom(result.room);
                       }, false)
                     }
                   >
-                    Start test game
+                    Open test table
                   </button>
                   <p className="ct-muted">
-                    Development only · control all {capacity} seats · no stats
+                    Development only · no self-host setup · up to 6 players · no stats
                   </p>
                 </div>
               )}
             </section>
             <section className="ct-lobby-section">
+              <LandingShip side="join" />
               <h2>Join a table</h2>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  openRoom(joinCode.trim().toUpperCase());
+                  const next = joinCode.trim().toUpperCase();
+                  openRoom(next, next === 'TESTING' ? 'server' : hosting);
                 }}
               >
                 <label>
@@ -497,7 +462,8 @@ export default function CatanApp({
                     value={joinCode}
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     minLength={6}
-                    maxLength={6}
+                    maxLength={7}
+                    pattern="([A-Z2-9]{6}|TESTING)"
                     placeholder="Table code"
                     autoCapitalize="characters"
                     required
@@ -554,9 +520,9 @@ export default function CatanApp({
               )}
             </section>
           </div>
-        </>
+        </LandingScene>
       )}
-      {tab === 'play' && code && (
+      {code && (
         <>
           <div className="ct-room-heading">
             <button onClick={() => openRoom('')}>← All tables</button>
@@ -566,9 +532,10 @@ export default function CatanApp({
             </div>
             <button
               onClick={() => {
-                const invite =
-                  room?.hosting === 'local' && bootstrap?.localAddresses[0]
-                    ? `${bootstrap.localAddresses[0]}&room=${code}`
+                const invite = room?.practice
+                  ? `${window.location.origin}/catan?room=TESTING`
+                  : room?.hosting === 'local' && bootstrap?.localAddresses[0]
+                    ? `${bootstrap.localAddresses[0].replace('/catan?', `${basePath}?`)}&room=${code}`
                     : window.location.href;
                 if (!navigator.clipboard) {
                   setError(`Invite link: ${invite}`);
@@ -580,7 +547,7 @@ export default function CatanApp({
                   .catch(() => setError('Copy the address from your browser to invite friends.'));
               }}
             >
-              {copied ? 'Link copied' : 'Copy invite link'}
+              {copied ? 'Link copied' : room?.practice ? 'Copy practice link' : 'Copy invite link'}
             </button>
           </div>
           {room?.hosting === 'local' && !!bootstrap?.localAddresses.length && (
@@ -599,6 +566,58 @@ export default function CatanApp({
               invitation.
             </p>
           )}
+          {room?.testing && room.isHost && (
+            <div className="ct-test-toolbar">
+              <span>
+                <strong>{room.practice ? 'Practice table' : 'Test table'}</strong> ·{' '}
+                {room.practice
+                  ? 'Only you control this table. No stats.'
+                  : 'Normal setup and rules.'}{' '}
+                Turns switch automatically.
+              </span>
+              <label>
+                View / control player
+                <select
+                  value={room.seats.findIndex((seat) => seat.me)}
+                  disabled={busy}
+                  onChange={(e) =>
+                    void run(async () => {
+                      const result = await api<{ room: RoomView }>('', {
+                        command: 'test-player',
+                        code: room.code,
+                        revision: room.revision,
+                        player: Number(e.target.value),
+                      });
+                      setRoom(result.room);
+                    }, false)
+                  }
+                >
+                  {room.seats.map((seat, i) => (
+                    <option key={seat.id} value={i} disabled={!seat.controllable}>
+                      {seat.name}
+                      {!seat.controllable ? ' · connected player' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {room.status === 'lobby' && (
+                <button
+                  disabled={busy || room.seats.length >= 6}
+                  onClick={() => void command('test-add-player')}
+                >
+                  Add player ({room.seats.length}/6)
+                </button>
+              )}
+              {room.practice && room.status !== 'lobby' && (
+                <button disabled={busy} onClick={() => void command('reset-practice')}>
+                  Restart setup
+                </button>
+              )}
+              <button disabled={busy} onClick={() => void command('delete-test')}>
+                Delete test table
+              </button>
+            </div>
+          )}
           {room && (!room.game || room.status === 'lobby') && (
             <section className="ct-panel ct-waiting">
               <span className="ct-eyebrow">The island is waiting</span>
@@ -608,13 +627,16 @@ export default function CatanApp({
               <div className="ct-seat-grid">
                 {Array.from({ length: room.capacity }, (_, i) => (
                   <div className={room.seats[i] ? 'ct-seat-filled' : 'ct-seat-empty'} key={i}>
-                    <span
-                      style={{
-                        background: room.seats[i] ? PLAYER_COLORS[room.seats[i].color] : '#dedfd3',
-                      }}
-                    >
-                      {room.seats[i]?.name[0] ?? '+'}
-                    </span>
+                    {room.seats[i] ? (
+                      <PlayerAvatar
+                        name={room.seats[i].name}
+                        src={room.seats[i].avatarUrl}
+                        color={PLAYER_COLORS[room.seats[i].color]}
+                        size={48}
+                      />
+                    ) : (
+                      <span style={{ background: '#dedfd3' }}>+</span>
+                    )}
                     <strong>{room.seats[i]?.name ?? 'Open seat'}</strong>
                     <small>
                       {room.seats[i]
@@ -693,12 +715,10 @@ export default function CatanApp({
                         value={guestName}
                         onChange={(e) => {
                           setGuestName(e.target.value);
-                          setProfileName(e.target.value);
                         }}
                       />
                     </label>
                   )}
-                  {nameAccount}
                   <button
                     className="ct-primary"
                     disabled={busy || room.seats.length >= room.capacity}
@@ -720,9 +740,11 @@ export default function CatanApp({
                   ) : (
                     <p>Waiting for the host to start.</p>
                   )}
-                  <button disabled={busy} onClick={() => void command('leave')}>
-                    Leave table
-                  </button>
+                  {!(room.testing && room.isHost) && (
+                    <button disabled={busy} onClick={() => void command('leave')}>
+                      Leave table
+                    </button>
+                  )}
                 </div>
               )}
               <p className="ct-muted">
@@ -736,37 +758,6 @@ export default function CatanApp({
           )}
           {room?.game && (
             <>
-              {testingAvailable && room.testing && (
-                <div className="ct-test-toolbar">
-                  <span>
-                    <strong>Test game</strong> · You control every seat. Turns switch automatically.
-                  </span>
-                  <label>
-                    View / control player
-                    <select
-                      value={room.me}
-                      disabled={busy}
-                      onChange={(e) =>
-                        void run(async () => {
-                          const result = await api<{ room: RoomView }>('', {
-                            command: 'test-player',
-                            code: room.code,
-                            revision: room.revision,
-                            player: Number(e.target.value),
-                          });
-                          setRoom(result.room);
-                        })
-                      }
-                    >
-                      {room.game.players.map((p, i) => (
-                        <option key={i} value={i}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              )}
               <GameTable
                 key={room.code}
                 room={room}
@@ -791,25 +782,21 @@ export default function CatanApp({
                       <>
                         Results are saved.{' '}
                         {user?.registered
-                          ? 'Your profile and the leaderboard have been updated.'
+                          ? 'Your profile has been updated.'
                           : 'Your result counts anonymously unless you choose to create a profile.'}
                       </>
                     )}
                   </p>
                   <div className="ct-action-row">
                     {room.hosting !== 'local' && !user?.registered && (
-                      <button
-                        className="ct-primary"
-                        onClick={() => {
-                          setAuth('register');
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
+                      <Link
+                        className="ct-profile-entry"
+                        href={`${profileHref}${profileHref.includes('?') ? '&' : '?'}mode=register`}
                       >
-                        Create profile & keep my stats
-                      </button>
+                        Create profile &amp; keep my stats
+                      </Link>
                     )}
                     <button onClick={() => openRoom('')}>Back to tables</button>
-                    <button onClick={() => openRoom('')}>View leaderboard</button>
                   </div>
                 </section>
               )}
@@ -817,158 +804,6 @@ export default function CatanApp({
           )}
         </>
       )}
-      {tab === 'play' && !code && (
-        <section className="ct-leaderboard" id="leaderboard" aria-labelledby="ct-leaderboard-title">
-          <h2 id="ct-leaderboard-title">Leaderboard</h2>
-          {hosting === 'local' ? (
-            <p className="ct-muted">
-              Local games don’t count toward stats. The leaderboard is available online.
-            </p>
-          ) : leaderboard ? (
-            <div className="ct-table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Player</th>
-                    <th scope="col">Games</th>
-                    <th scope="col">Wins</th>
-                    <th scope="col">Win rate</th>
-                    <th scope="col">Avg. points</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leaderboard.rows.map((r) => (
-                    <tr key={r.name}>
-                      <th scope="row">{r.name}</th>
-                      <td>{r.games}</td>
-                      <td>{r.wins}</td>
-                      <td>{r.winRate}%</td>
-                      <td>{r.averagePoints}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!leaderboard.rows.length && <p className="ct-empty">No completed games yet.</p>}
-            </div>
-          ) : (
-            <p className="ct-muted">Loading leaderboard…</p>
-          )}
-        </section>
-      )}
-      {tab === 'profile' && (
-        <section className="ct-stats-page">
-          <button className="ct-text-button" onClick={() => openRoom('')}>
-            ← Back to tables
-          </button>
-          <h1>{user?.registered ? `${user.name}’s stats` : 'Your stats'}</h1>
-          {!user?.registered ? (
-            <div className="ct-panel">
-              <p>
-                Sign in to see your wins, building habits, resource production, and game history.
-              </p>
-              <div className="ct-action-row">
-                <button className="ct-primary" onClick={() => setAuth('login')}>
-                  Sign in
-                </button>
-                {user?.canRegister && (
-                  <button onClick={() => setAuth('register')}>
-                    Create profile from my first game
-                  </button>
-                )}
-              </div>
-              <p className="ct-muted">
-                New here? Play a game as a guest first. Then you can save that result to a profile.
-              </p>
-            </div>
-          ) : profile ? (
-            <>
-              <div className="ct-stat-grid">
-                <Stat label="Games played" value={profile.games} />
-                <Stat label="Wins" value={profile.wins} />
-                <Stat label="Win rate" value={`${profile.winRate.toFixed(1)}%`} />
-                <Stat label="Average points" value={profile.averagePoints.toFixed(1)} />
-                <Stat label="Best score" value={profile.bestPoints} />
-                <Stat label="Avg. turns per game" value={profile.averageTurns.toFixed(1)} />
-              </div>
-              <div className="ct-panel">
-                <h2>Your style of play</h2>
-                <div className="ct-stat-grid">
-                  <Stat label="Resources produced" value={profile.resourcesProduced} />
-                  <Stat label="Trades completed" value={profile.trades} />
-                  <Stat label="Cards stolen" value={profile.cardsStolen} />
-                  <Stat label="Cards lost to robber" value={profile.cardsLostToRobber} />
-                  <Stat label="Cards discarded" value={profile.cardsDiscarded} />
-                  <Stat label="Roads built" value={profile.roadsBuilt} />
-                  <Stat label="Settlements built" value={profile.settlementsBuilt} />
-                  <Stat label="Cities built" value={profile.citiesBuilt} />
-                  <Stat label="Development bought" value={profile.developmentBought} />
-                </div>
-                <p className="ct-muted">
-                  Totals across completed games; starting settlements and roads are included. A
-                  paired player’s action phase counts as a turn.
-                </p>
-              </div>
-              <div className="ct-panel">
-                <h2>By table size</h2>
-                <div className="ct-stat-grid">
-                  {profile.bySize.map((s) => (
-                    <Stat
-                      key={s.players}
-                      label={`${s.players} players · ${s.games} games`}
-                      value={`${s.wins} wins`}
-                    />
-                  ))}
-                </div>
-              </div>
-              <section className="ct-panel">
-                <h2>Game history</h2>
-                {profile.history.length ? (
-                  profile.history.map((h) => (
-                    <details key={h.room}>
-                      <summary>
-                        {h.won ? 'Victory' : 'Finished'} · {h.points} points · {h.players} players ·{' '}
-                        {new Date(h.finished).toLocaleDateString()}
-                      </summary>
-                      <p>
-                        {h.turns} turns. Opponents:{' '}
-                        {h.opponents
-                          .map((o) => `${o.name} (${o.points} pts${o.won ? ', winner' : ''})`)
-                          .join(', ')}
-                        .
-                      </p>
-                      <button onClick={() => openRoom(h.room)}>Revisit island</button>
-                    </details>
-                  ))
-                ) : (
-                  <p>No completed games yet.</p>
-                )}
-              </section>
-              <button
-                disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    await api('', { command: 'logout' });
-                    setProfile(undefined);
-                    openRoom('');
-                  })
-                }
-              >
-                Sign out
-              </button>
-            </>
-          ) : (
-            <p>Loading your stats…</p>
-          )}
-        </section>
-      )}
     </main>
-  );
-}
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="ct-stat">
-      <strong>{value}</strong>
-      <span>{label}</span>
-    </div>
   );
 }

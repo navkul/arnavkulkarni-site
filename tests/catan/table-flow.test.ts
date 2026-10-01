@@ -13,6 +13,11 @@ import {
 import { roomView } from '../../src/lib/catan/view.ts';
 import { createBoard } from '../../src/lib/catan/board.ts';
 import { newGame, seeded, finishOpening } from './helpers.ts';
+import {
+  DICE_LEAD_MS,
+  OPENING_COUNTDOWN_MS,
+  OPENING_REVEAL_MS,
+} from '../../src/lib/catan/motion-timing.ts';
 
 function openingRoom(): Room {
   const game = newGame();
@@ -40,14 +45,21 @@ function openingRoom(): Room {
 test('opening countdown, authorized clockwise rolls, tied highest rerolls and stable colors', () => {
   const room = openingRoom();
   beginOpening(room, 1000);
-  assert.equal(room.opening!.revealAt, 4000);
-  assert.throws(() => rollOpening(room, 'seat-0', () => 0, 4000), /settle/);
-  assert.throws(() => rollOpening(room, 'seat-1', () => 0, 9500), /your opening roll/);
+  assert.equal(room.opening!.revealAt, 1000 + OPENING_COUNTDOWN_MS);
+  assert.equal(room.opening!.readyAt, room.opening!.revealAt + OPENING_REVEAL_MS);
+  assert.throws(() => rollOpening(room, 'seat-0', () => 0, room.opening!.readyAt - 1), /settle/);
+  assert.throws(
+    () => rollOpening(room, 'seat-1', () => 0, room.opening!.readyAt),
+    /your opening roll/,
+  );
   const roll = (id: string, die: number) =>
     rollOpening(room, id, () => (die - 1) / 6, room.opening!.readyAt);
+  const firstRollAt = room.opening!.readyAt;
   roll('seat-0', 6);
   assert.equal(room.diceEvent!.color, 4);
   assert.equal(room.opening!.readyAt, room.diceEvent!.at + DICE_DURATION_MS);
+  assert.equal(room.opening!.readyAt, firstRollAt + DICE_LEAD_MS + DICE_DURATION_MS);
+  assert.throws(() => rollOpening(room, 'seat-1', () => 0, room.opening!.readyAt - 1), /settle/);
   roll('seat-1', 2);
   roll('seat-2', 6);
   assert.equal(room.status, 'starting');

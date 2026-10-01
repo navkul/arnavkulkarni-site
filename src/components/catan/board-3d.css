@@ -1,0 +1,195 @@
+.ct3d-board {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #d9d1bb;
+  border-radius: 18px;
+  background: #ece7d8;
+  box-shadow: 0 14px 35px #3f493214;
+}
+.ct3d-controls {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ct-app .ct3d-controls button {
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid #d8d0bb;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #526057;
+  font-size: 10px;
+  box-shadow: none;
+}
+.ct-app .ct3d-controls button:hover {
+  background: #e7e1d0;
+}
+.ct3d-viewport {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: radial-gradient(ellipse at 50% 42%, #f7f1df 0%, #e8e2d2 60%, #d8d4c5 100%);
+  isolation: isolate;
+}
+.ct3d-canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+}
+.ct3d-target-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ct-app .ct3d-target {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: 25px;
+  height: 25px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  border: 1px solid #e8dcb4;
+  border-radius: 50%;
+  background: #fff6dcdc;
+  color: #527568;
+  font-size: 19px;
+  box-shadow: 0 2px 7px #243e3b44;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.ct-app .ct3d-target:hover,
+.ct-app .ct3d-target:focus-visible,
+.ct-app .ct3d-target.is-selected {
+  background: #fff8d8;
+  outline: 2px solid #427d79;
+  outline-offset: 3px;
+  z-index: 4;
+  box-shadow: 0 0 0 7px #ffefb444;
+}
+.ct-app .ct3d-edge {
+  width: 20px;
+  height: 20px;
+  font-size: 29px;
+}
+.ct-app .ct3d-hex {
+  width: 31px;
+  height: 31px;
+  background: #fbf4dbe8;
+}
+.ct3d-target-name {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  padding: 6px 9px;
+  border-radius: 5px;
+  white-space: nowrap;
+  background: #334f49;
+  color: #fff4d8;
+  font-size: 10px;
+  pointer-events: none;
+}
+.ct3d-target:hover .ct3d-target-name,
+.ct3d-target:focus-visible .ct3d-target-name {
+  display: block;
+}
+.ct3d-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  font-size: 12px;
+  color: #758475;
+}
+.ct3d-loading span {
+  width: 40px;
+  height: 40px;
+  border: 2px solid #c6ccb7;
+  border-top-color: #5e8374;
+  border-radius: 50%;
+  animation: ct3d-loading 1.5s linear infinite;
+}
+.ct3d-overlay-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 6;
+}
+.ct3d-motion-origin {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+.ct3d-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.ct3d-flat .ct-board-shell {
+  border: 0;
+  border-radius: 0;
+}
+@keyframes ct3d-loading {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 650px) {
+  .ct3d-board {
+    min-height: 320px;
+  }
+  .ct3d-controls {
+    top: 9px;
+    right: 9px;
+  }
+  .ct-app .ct3d-controls button {
+    min-width: 32px;
+    min-height: 32px;
+  }
+  .ct3d-overlay-controls {
+    right: 10px;
+    bottom: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ct3d-loading span {
+    animation: none;
+  }
+  .ct-app .ct3d-target {
+    transition: none;
+  }
+}

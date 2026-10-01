@@ -59,8 +59,9 @@ Docker, cloud credentials, or npm installation during offline play. Preparing ag
 replaces only the bundle and preserves `.data/catan-local.sqlite`. Environment files
 are excluded from the portable bundle, and the launcher removes cloud credentials.
 
-Local games are guest-only and never create leaderboard/results rows or profile
-registration eligibility. They are saved in `.data/catan-local.sqlite`; set
+Local games support guests and separate profiles saved on that host. They never
+create leaderboard/results rows. Accounts, pictures, recordings and games are saved
+in `.data/catan-local.sqlite`; set
 `CATAN_LOCAL_DATABASE_PATH` to override the path. Any seated player can request a pause;
 every other player must agree. Any seated player can resume a paused table.
 Local and online sessions use separate cookies, so switching modes keeps both seats.
@@ -84,9 +85,11 @@ link; Vercel cannot serve games after the players lose internet access.
   or robber phase. Restarting the server does not require restarting the game.
 - Session cookies are HTTP-only, SameSite=Lax, and Secure when served over HTTPS.
   Session secrets are stored hashed. Passwords use salted scrypt hashes.
-- A guest can create a name/password profile after completing their first game.
-  Their unclaimed completed results attach only to that profile. Signing in later
-  recovers the profile's seats, including on a different device.
+- Anyone can create a username/password profile at `/catan/profile` before playing.
+  Existing unclaimed completed results attach only to that guest's profile. Signing
+  in later recovers the profile's seats, including on another device. Usernames stay
+  fixed; editable display names appear in seats, games and the leaderboard.
+  `/catan/profile?hosting=local` manages a separate account on the local host.
 - Any seated player can request **Pause & save** from the top controls. The game
   continues until all other players agree; any player can decline the request.
   Accepted moves are already saved, whether or not the table is paused.
@@ -147,16 +150,36 @@ still end automatically when a player legally reaches 10 points on their turn.
 ## Statistics and anonymity
 
 Completed online results automatically enter the server's durable statistics database.
-The public leaderboard shows profile name, games, wins, win rate, and average
+The public leaderboard shows display name, games, wins, win rate, and average
 points. Ranking uses win rate, then number of games, then average points. It also
 shows aggregate anonymous appearances and wins, without guest display names.
 
-Private profiles show game history, score and win-rate summaries, performance by
-table size, resources produced, trades, robber theft/loss, discards, building counts,
-and development purchases. Opponents without profiles are labeled **Anonymous** in
+The profile page shows completed games, wins, win rate, average points and recent
+results. Its private API also retains performance by table size, resources produced,
+trades, robber theft/loss, discards, building counts and development purchases. Opponents without profiles are labeled **Anonymous** in
 history, while their scores/outcomes still count. Starting pieces count toward
 building totals; each paired action phase counts as a turn. Completed records are
 inserted once per seat, so retries do not duplicate leaderboard results.
+
+## Profile pictures and recorded sounds
+
+The profile page accepts a picture from the device or camera, crops it to a square,
+and saves a 320px JPEG. Pictures appear in the lobby and in each in-game player box;
+guests use initials. Media is stored in PostgreSQL (online) or SQLite (local), never
+in Vercel's temporary filesystem. Additive `profile_preferences` and `profile_media`
+tables preserve existing accounts. Opaque media URLs keep binary data out of room
+poll responses. The API accepts JPEG/PNG/WebP images and WebM/Ogg/MP4 audio, checks
+container signatures and rejects media above 256 KB.
+
+Sounds can only be created from the microphone in the interface; there is no audio
+file picker. Recording stops after five seconds and releases the microphone. This
+requires microphone permission plus HTTPS or localhost. A profile can save ten
+sounds and activate three, with both limits enforced transactionally by the server.
+The player's own tile opens their active sound buttons. Reactions broadcast only
+to seated players, with a six-second sender cooldown; a listener can mute table
+sounds. Browser audio must first be enabled by a user gesture. Sound assets require
+an owning profile or a shared table membership. Sound events expire after fifteen
+seconds and do not advance the game revision or interrupt unfinished moves.
 
 ## Win estimates
 
@@ -207,15 +230,39 @@ The preexisting site browser tests remain available through `npm run test:e2e`.
 
 ## Solo testing in development
 
-Run `npm run dev`, open `/catan`, and click **Start test game** below the create form.
-No names, Postgres setup, or other browsers are required. The player slider chooses
-3–6 seats. A local, unranked test table opens immediately with starting settlements
-and roads placed, stocked resource hands, and the first roll ready.
+Run `npm run dev`, open `/catan`, and click **Open test table** below the create form.
+No names, Postgres setup, Self-host toggle, or other browsers are required.
+Opening a test table leaves the lobby’s hosting preference unchanged. Development keeps one
+local test table; the same button reopens it until its host deletes it.
 
-One browser controls all seats. After each move the view follows the active player
-(or the next player who must discard). Use **View / control player** to inspect a
-different hand or accept a trade as its recipient. Test players are manually
-controlled placeholders, not AI opponents. End the table with the host's End game
-control. Test games save locally, never write results, and disable probability jobs.
-The entry point and server-side test controls are available only in development;
-production builds and Vercel reject them.
+The table starts with your seat in the normal lobby. Click **Add player** for each
+simulated player, up to six total seats. **View / control player** lets you choose
+and lock each simulated player's color. Adding beyond the selected capacity expands
+the table. Friends can also join open seats with the normal invite link.
+
+**Start game** uses the regular board reveal, opening dice, settlement/road setup,
+resource distribution, and game rules. Nothing is prebuilt or added to your hand.
+After each move, control follows the next simulated player (including opening rolls
+and discards). Real connected players control their own seats and private hands.
+Use the player selector to accept a trade from another simulated seat. These players
+are manually controlled, not AI opponents.
+
+**Delete test table** is available in both the lobby and game. It clears the test
+so you can start fresh. Test games save locally, never write results, and disable
+probability jobs. This local entry point is available only in development. The separate TESTING entry
+below exposes owner-only practice controls on deployed, unranked practice tables.
+
+## Deployed practice table
+
+Enter **TESTING** in Join a table, or open `/catan?room=TESTING`. The server creates
+or reopens one private practice table for the current visitor. It opens straight onto
+an unranked four-player board with legally placed starting pieces and normal resources.
+The tester controls all four hands; turn control follows each move automatically.
+
+**Restart setup** returns that same table to the color-selection lobby with one seat.
+Add players up to six, choose colors, and start to test the normal reveal, opening rolls,
+and settlement/road placement. **Delete test table** deletes only the tester's own
+sandbox; entering TESTING again creates a fresh one. Other visitors get separate tables.
+Practice tables persist in the server database, never record results or run probability
+jobs, and cannot be joined or controlled by another visitor. Ordinary multiplayer games
+retain their normal permissions; the local development singleton remains separate.

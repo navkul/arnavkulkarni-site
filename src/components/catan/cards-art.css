@@ -1,0 +1,239 @@
+/* The miniature artwork is local SVG, so both decks also work offline. */
+.ct-app .ct-illustrated-card,
+.ct-app .ct-card-back {
+  overflow: visible;
+  border-radius: 7px;
+  filter: drop-shadow(0 1px 0 #6a54374d);
+}
+.ct-app .ct-card-stack {
+  perspective: 650px;
+  isolation: isolate;
+  transition: width 220ms ease;
+}
+.ct-app .ct-stack-layer {
+  transform-origin: 50% 90%;
+  transform: translateY(calc(var(--layer) * -0.8px))
+    rotate(calc((var(--layer) - var(--stack-depth) / 2) * 2deg));
+  filter: drop-shadow(0 2px 2px #253b3b25);
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    filter 240ms ease;
+  animation: ct-card-dealt 380ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.ct-app .ct-card-stack[data-empty] {
+  opacity: 0.42;
+  filter: saturate(0.35);
+}
+.ct-app .ct-card-count {
+  background: linear-gradient(145deg, #fffbee, #efe2c3);
+  border-color: #ad9666;
+  box-shadow:
+    0 2px 5px #3b362724,
+    inset 0 1px 0 #fffdfa;
+  font-variant-numeric: tabular-nums;
+  animation: ct-card-count-in 250ms ease-out;
+}
+.ct-app .ct-played-mini {
+  transform-origin: center bottom;
+  transition:
+    transform 200ms ease,
+    filter 200ms ease;
+  filter: drop-shadow(0 1px 1px #233b3530);
+  animation: ct-card-revealed 340ms ease-out both;
+}
+.ct-app .ct-award-card {
+  filter: drop-shadow(0 3px 3px #78612e22);
+}
+.ct-app .ct-hand-development {
+  transform-origin: center bottom;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    filter 220ms ease;
+}
+.ct-app .ct-hand-development:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 6px;
+  border-radius: 5px;
+  transform: translateY(-8px);
+}
+@media (hover: hover) and (pointer: fine) {
+  .ct-app .ct-card-hand .ct-card-stack:hover .ct-stack-layer {
+    transform: translateY(calc(-6px - var(--layer) * 1.5px))
+      rotate(calc((var(--layer) - var(--stack-depth) / 2) * 4deg));
+    filter: drop-shadow(0 5px 4px #253b3b32);
+  }
+  .ct-app .ct-hand-development:enabled:hover {
+    transform: translateY(-10px) rotate(-2deg);
+    filter: drop-shadow(0 6px 4px #253b3b32);
+  }
+  .ct-app .ct-played-mini:hover {
+    position: relative;
+    z-index: 5;
+    transform: translateY(-5px) scale(2.6);
+    filter: drop-shadow(0 4px 3px #253b3b32);
+  }
+}
+@keyframes ct-card-dealt {
+  from {
+    opacity: 0;
+    translate: 0 -12px;
+    rotate: -5deg;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    rotate: 0deg;
+  }
+}
+@keyframes ct-card-revealed {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) rotateY(75deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotateY(0);
+  }
+}
+@keyframes ct-card-count-in {
+  from {
+    scale: 1.2;
+  }
+  to {
+    scale: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ct-app .ct-card-stack,
+  .ct-app .ct-stack-layer,
+  .ct-app .ct-card-count,
+  .ct-app .ct-played-mini,
+  .ct-app .ct-hand-development {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Stock edges catch the same warm light as the island's wooden pieces. The top face stays
+   flat for crisp compact text; layouts can set --card-width on their hand panel. */
+.ct-app .ct-card-stack:not(.ct-card-stack-small) {
+  --card-face-width: var(--card-width, 77px);
+  width: calc(var(--card-face-width) + var(--stack-depth) * 3px);
+  height: calc(var(--card-face-width) * 1.25 + 6px);
+}
+.ct-app .ct-card-stack:not(.ct-card-stack-small) .ct-stack-layer {
+  width: var(--card-face-width);
+}
+.ct-app .ct-stack-layer {
+  border-radius: 6px;
+  background: #d7c7a1;
+  box-shadow:
+    0 1px 0 #b6a17b,
+    0 2px 0 #ecdfbf,
+    0 3px 1px #82745966;
+  transform: translateY(calc(var(--layer) * -0.8px))
+    rotate(calc((var(--layer) - var(--stack-depth)) * 1.6deg));
+}
+.ct-app .ct-stack-layer::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 5px;
+  background: linear-gradient(115deg, #fffdf52e, transparent 40%, #806d3707 75%);
+  box-shadow: inset 0 0.6px 0 #fffefab3;
+  pointer-events: none;
+}
+.ct-app .ct-card-stack-small .ct-stack-layer {
+  box-shadow: 0 1px 0 #b6a17b;
+}
+.ct-app .ct-card-count {
+  font-weight: 700;
+  line-height: 19px;
+  color: #2e483f;
+  border-color: #ac9565;
+  z-index: 8;
+}
+.ct-app .ct-card-stack-small .ct-card-count {
+  line-height: 16px;
+}
+.ct-app .ct-card-choice {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  isolation: isolate;
+  cursor: pointer;
+  transition: transform 180ms ease;
+}
+.ct-app .ct-card-choice:hover,
+.ct-app .ct-card-choice:disabled {
+  background: transparent;
+}
+.ct-app .ct-card-choice:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.ct-app .ct-card-choice:focus-visible {
+  outline: 2px solid var(--primary, #286579);
+  outline-offset: 5px;
+}
+.ct-app .ct-card-choice[aria-pressed='true'] {
+  transform: translateY(-5px);
+}
+.ct-app .ct-card-choice[aria-pressed='true'] .ct-stack-layer:last-of-type {
+  box-shadow:
+    0 0 0 2px #28778b,
+    0 5px 8px #26483b33;
+}
+.ct-app .ct-card-choice-mark {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #a6beb5;
+  border-radius: 50%;
+  background: #fffbee;
+  color: #2c6370;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 2px 3px #24443a22;
+  pointer-events: none;
+}
+.ct-app .ct-card-choice[aria-pressed='true'] .ct-card-choice-mark {
+  color: #fffbee;
+  background: #286d7f;
+  border-color: #286d7f;
+}
+.ct-app .ct-card-choice:disabled .ct-card-choice-mark {
+  display: none;
+}
+@media (max-width: 720px) {
+  .ct-app .ct-card-stack:not(.ct-card-stack-small) {
+    --card-face-width: var(--card-width, 61px);
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .ct-app .ct-card-choice:enabled:hover {
+    transform: translateY(-4px);
+  }
+  .ct-app .ct-card-choice[aria-pressed='true']:hover {
+    transform: translateY(-6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ct-app .ct-card-choice {
+    transition: none;
+  }
+}

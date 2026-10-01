@@ -28,6 +28,54 @@ export const DEVELOPMENT_NAMES: Record<Development, string> = {
 export type Random = () => number;
 export type Phase =
   'setup-settlement' | 'setup-road' | 'roll' | 'discard' | 'robber' | 'trade' | 'finished';
+export type VisualEventType =
+  | 'start'
+  | 'opening-roll'
+  | 'settlement'
+  | 'road'
+  | 'city'
+  | 'roll'
+  | 'production'
+  | 'discard'
+  | 'robber'
+  | 'steal'
+  | 'bank-trade'
+  | 'offer'
+  | 'accept-trade'
+  | 'cancel-trade'
+  | 'buy-development'
+  | 'development'
+  | 'turn'
+  | 'phase'
+  | 'pause-request'
+  | 'pause-vote'
+  | 'pause-declined'
+  | 'pause'
+  | 'resume'
+  | 'finish';
+/** Public animation facts only. Hidden draws, hands and discarded card kinds never belong here. */
+export interface VisualEvent {
+  id: string;
+  type: VisualEventType;
+  at: number;
+  actorId?: string;
+  targetPlayerId?: string;
+  phase?: Phase;
+  fromPhase?: Phase;
+  vertex?: number;
+  edge?: number;
+  edges?: number[];
+  hex?: number;
+  fromHex?: number;
+  hexes?: number[];
+  count?: number;
+  resources?: Partial<Cards>;
+  give?: Partial<Cards>;
+  receive?: Partial<Cards>;
+  card?: Exclude<Development, 'victory'>;
+  values?: [number, number];
+  reason?: 'winner' | 'ended';
+}
 export interface Vertex {
   id: number;
   x: number;

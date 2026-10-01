@@ -10,7 +10,7 @@ import {
 import { cardCount, RESOURCES, type Development } from './types.ts';
 import { owns, controlledSeat, type Identity, type Room } from './store.ts';
 import { DICE_DURATION_MS } from './table-flow.ts';
-import { testingAvailable } from './testing-mode.ts';
+import { testControlsAvailable } from './testing-mode.ts';
 
 export function roomSummary(room: Room, identity: Identity) {
   return {
@@ -70,6 +70,13 @@ export function roomView(room: Room, identity: Identity) {
     awardEvents: seat
       ? (room.awardEvents ?? []).map((e) => ({ ...e, playerId: publicId(e.playerId) }))
       : [],
+    visualEvents: seat
+      ? (room.visualEvents ?? []).map((event) => ({
+          ...event,
+          actorId: event.actorId ? publicId(event.actorId) : undefined,
+          targetPlayerId: event.targetPlayerId ? publicId(event.targetPlayerId) : undefined,
+        }))
+      : [],
     pauseRequest:
       seat && room.pauseRequest
         ? {
@@ -79,11 +86,18 @@ export function roomView(room: Room, identity: Identity) {
             agreed: room.pauseRequest.votes.includes(seat.id),
           }
         : undefined,
+    mySounds: owner && seat?.id === owner.id ? (owner.sounds ?? []) : [],
+    soundEvents: seat
+      ? (room.soundEvents ?? [])
+          .filter((event) => event.at > Date.now() - 15000)
+          .map((event) => ({ ...event, playerId: publicId(event.playerId) }))
+      : [],
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     finishedAt: room.finishedAt,
     isHost: !!owner && owner.id === room.host,
-    testing: !!room.testing && testingAvailable(),
+    testing: testControlsAvailable(room),
+    practice: !!room.practice,
     joined: !!seat,
     me: player,
     seats: room.seats.map((s, i) => ({
@@ -91,7 +105,9 @@ export function roomView(room: Room, identity: Identity) {
       color: s.color ?? i,
       colorLocked: !!s.colorLocked,
       name: s.name,
+      avatarUrl: s.avatarUrl,
       registered: !!s.profileId,
+      controllable: s.id === room.host || !!s.simulated,
       host: s.id === room.host,
       me: seat?.id === s.id,
     })),
@@ -119,6 +135,7 @@ export function roomView(room: Room, identity: Identity) {
               id: publicId(p.id),
               color: p.color ?? i,
               name: p.name,
+              avatarUrl: room.seats.find((seat) => seat.id === p.id)?.avatarUrl,
               registered: !!p.profileId,
               resourcesCount: cardCount(p.resources),
               developmentCount: p.development.length,

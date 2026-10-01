@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
     const code = query.get('room')?.toUpperCase();
     if (code) {
       const room = await store.room(code);
-      if (room.status !== 'lobby' && !room.seats.some((s) => owns(identity, s)))
+      if ((room.status !== 'lobby' || room.practice) && !room.seats.some((s) => owns(identity, s)))
         throw new ServiceError('Only seated players can open this game.', 403);
       if (room.game) after(() => queueEvaluation(room));
       return response(
@@ -107,10 +107,13 @@ export async function GET(request: NextRequest) {
             : [],
         user: {
           name: identity.name ?? null,
+          username: identity.username ?? null,
+          avatarUrl: identity.avatarUrl,
           registered: !!identity.profileId,
           canRegister: await store.canRegister(identity),
         },
         rooms: (await store.rooms())
+          .filter((r) => !r.practice || r.seats.some((s) => owns(identity, s)))
           .filter((r) => r.status === 'lobby' || r.seats.some((s) => owns(identity, s)))
           .sort((a, b) => b.updatedAt - a.updatedAt)
           .slice(0, 100)
@@ -134,7 +137,14 @@ export async function POST(request: NextRequest) {
     if (!request.headers.get('content-type')?.startsWith('application/json'))
       throw new ServiceError('Use application/json.', 415);
     const body = await readBody(request);
-    if (['create-test', 'test-player'].includes(body.command as string) && !testingAvailable())
+    if (
+      !testingAvailable() &&
+      (body.command === 'create-test' ||
+        (request.nextUrl.searchParams.get('hosting') === 'local' &&
+          ['test-player', 'test-add-player', 'delete-test', 'reset-practice'].includes(
+            body.command as string,
+          )))
+    )
       throw new ServiceError('Testing mode is available only in local development.', 403);
     const requested = request.nextUrl.searchParams.get('hosting');
     if (requested && !['server', 'local'].includes(requested))
@@ -143,6 +153,19 @@ export async function POST(request: NextRequest) {
     const session = await store.session(request.cookies.get(sessionCookie(request))?.value);
     const { identity } = session;
     await store.rateLimit(`session:${identity.sessionHash}`, 180);
+    if (body.command === 'open-practice') {
+      const room = await store.openPracticeRoom(identity);
+      return response(request, { room: roomView(room, identity) }, session.secret);
+    }
+    if (body.command === 'reset-practice') {
+      if (typeof body.code !== 'string') throw new ServiceError('Enter a room code.');
+      const room = await store.resetPracticeRoom(
+        identity,
+        body.code.toUpperCase(),
+        body.revision as number,
+      );
+      return response(request, { room: roomView(room, identity) }, session.secret);
+    }
     if (body.command === 'create-test') {
       const room = await store.createTestRoom(
         identity,
@@ -150,6 +173,16 @@ export async function POST(request: NextRequest) {
         Number(body.capacity),
         body.guestName,
       );
+      return response(request, { room: roomView(room, identity) }, session.secret);
+    }
+    if (body.command === 'test-add-player' || body.command === 'delete-test') {
+      if (typeof body.code !== 'string') throw new ServiceError('Enter a room code.');
+      const code = body.code.toUpperCase();
+      if (body.command === 'delete-test') {
+        await store.deleteTestRoom(identity, code, body.revision as number);
+        return response(request, { room: null }, session.secret);
+      }
+      const room = await store.addTestPlayer(identity, code, body.revision as number);
       return response(request, { room: roomView(room, identity) }, session.secret);
     }
     if (body.command === 'test-player') {
@@ -168,6 +201,19 @@ export async function POST(request: NextRequest) {
           ? await store.register(identity, body.name, body.password as string)
           : await store.login(identity, body.name, body.password as string);
       return response(request, { ok: true }, secret);
+    }
+    if (body.command === 'profile-update') {
+      await store.updateProfile(identity, body.displayName);
+      return response(request, { ok: true }, session.secret);
+    }
+    if (body.command === 'sound-update' || body.command === 'sound-delete') {
+      await store.updateSound(identity, body.id, body.active, body.command === 'sound-delete');
+      return response(request, { ok: true }, session.secret);
+    }
+    if (body.command === 'play-sound') {
+      if (typeof body.code !== 'string') throw new ServiceError('Enter a room code.');
+      await store.playSound(identity, body.code.toUpperCase(), body.soundId);
+      return response(request, { ok: true }, session.secret);
     }
     if (body.command === 'logout')
       return response(request, { ok: true }, await store.logout(identity));

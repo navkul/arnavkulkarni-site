@@ -1,0 +1,107 @@
+.ct-playing .ct-player-sounds {
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  width: 23px;
+  height: 23px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid #a3c2b6;
+  color: #245b5f;
+  background: #edf5e9;
+  font-size: 16px;
+  z-index: 2;
+}
+.ct-playing .ct-player-sounds:hover {
+  background: #d9ebdb;
+}
+.ct-sounds-dialog {
+  width: min(420px, calc(100vw - 28px));
+}
+.ct-sounds-dialog p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ct-sound-pad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 20px 0;
+}
+.ct-app .ct-sound-pad button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 8px;
+  background: #edf1e4;
+  border-color: #b5c4ab;
+  border-radius: 14px;
+  min-width: 0;
+  transition:
+    transform 160ms,
+    background 160ms;
+}
+.ct-app .ct-sound-pad button:hover:not(:disabled) {
+  transform: translateY(-3px);
+  background: #ddebd9;
+}
+.ct-app .ct-sound-pad span {
+  font-size: 28px;
+}
+.ct-app .ct-sound-pad strong {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.ct-sound-preferences {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #d3d9c6;
+  font-size: 11px;
+}
+.ct-sound-preferences a {
+  margin-left: auto;
+}
+.ct-player-portrait {
+  position: relative;
+}
+.ct-playing .ct-sound-reaction {
+  position: absolute;
+  bottom: -2px;
+  right: -10px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  font-size: 14px;
+  background: #f9f0cf;
+  border: 1px solid #cbb275;
+  border-radius: 8px 8px 8px 0;
+  box-shadow: 0 2px 6px #173c3820;
+  animation: ct-sound-arrive 200ms ease-out;
+}
+@keyframes ct-sound-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.65) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ct-sound-pad button {
+    transition: none;
+  }
+  .ct-sound-reaction {
+    animation: none;
+  }
+}

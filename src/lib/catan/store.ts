@@ -7,11 +7,12 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import { promisify } from 'node:util';
-import { applyAction, RuleError, score, roadSites, settlementSites } from './engine.ts';
-import { RESOURCES, type Action, type Game, type PlayerMetrics } from './types.ts';
+import { applyAction, RuleError, score, settlementSites, roadSites } from './engine.ts';
+import { type Action, type Game, type PlayerMetrics, type VisualEvent } from './types.ts';
 import { createGame } from './engine.ts';
 import { beginOpening, rollOpening, recordVisuals, DICE_DURATION_MS } from './table-flow.ts';
-import { testingAvailable } from './testing-mode.ts';
+import { testingAvailable, testControlsAvailable } from './testing-mode.ts';
+import { recordCommandEvents } from './visual-events.ts';
 
 const scrypt = promisify(scryptCallback);
 export const secureRandom = () => randomInt(0, 0x100000000) / 0x100000000;
@@ -42,6 +43,14 @@ export interface Identity {
   guestId: string;
   profileId?: string;
   name?: string;
+  username?: string;
+  avatarUrl?: string;
+}
+export interface ProfileSound {
+  id: string;
+  name: string;
+  emoji: string;
+  url: string;
 }
 export interface Seat {
   id: string;
@@ -50,6 +59,9 @@ export interface Seat {
   profileId?: string;
   color?: number;
   colorLocked?: boolean;
+  simulated?: boolean;
+  avatarUrl?: string;
+  sounds?: ProfileSound[];
 }
 export interface Odds {
   revision: number;
@@ -66,6 +78,7 @@ export interface Room {
   hosting?: 'server' | 'local';
   winProbability?: boolean;
   testing?: boolean;
+  practice?: boolean;
   testPlayer?: number;
   host: string;
   seats: Seat[];
@@ -88,6 +101,8 @@ export interface Room {
   diceEvent?: { id: string; playerId: string; color: number; values: [number, number]; at: number };
   awardEvents?: { id: string; kind: 'longestRoad' | 'largestArmy'; playerId: string; at: number }[];
   pauseRequest?: { id: string; by: string; votes: string[] };
+  visualEvents?: VisualEvent[];
+  soundEvents?: (ProfileSound & { at: number; playerId: string; soundId: string })[];
 }
 interface ProfileRow {
   id: string;
@@ -112,9 +127,11 @@ export function owns(identity: Identity, seat: Seat) {
 /** The real host owns the sandbox; only its selected test hand changes. */
 export function controlledSeat(room: Room, identity: Identity) {
   const owner = room.seats.find((s) => owns(identity, s));
-  return room.testing && testingAvailable() && owner?.id === room.host
-    ? room.seats[room.testPlayer ?? 0]
-    : owner;
+  if (testControlsAvailable(room) && owner?.id === room.host) {
+    const selected = room.seats[room.testPlayer ?? 0];
+    return selected && (selected.id === room.host || selected.simulated) ? selected : owner;
+  }
+  return owner;
 }
 export async function passwordHash(password: string): Promise<string> {
   check(
@@ -187,8 +204,14 @@ export class CatanStore {
   }
   async session(secret?: string): Promise<{ identity: Identity; secret?: string }> {
     if (secret && secret.length <= 128) {
-      const row = await this.get<{ guest: string; profile: string | null; name: string | null }>(
-        `SELECT s.guest,s.profile,p.name FROM sessions s LEFT JOIN profiles p ON s.profile=p.id WHERE s.hash=? AND s.expires>?`,
+      const row = await this.get<{
+        guest: string;
+        profile: string | null;
+        name: string | null;
+        username: string | null;
+        avatar: string | null;
+      }>(
+        `SELECT s.guest,s.profile,COALESCE(f.display_name,p.name) name,p.name username,f.avatar FROM sessions s LEFT JOIN profiles p ON s.profile=p.id LEFT JOIN profile_preferences f ON f.profile=p.id WHERE s.hash=? AND s.expires>?`,
         hash(secret),
         Date.now(),
       );
@@ -199,6 +222,8 @@ export class CatanStore {
             guestId: row.guest,
             profileId: row.profile ?? undefined,
             name: row.name ?? undefined,
+            username: row.username ?? undefined,
+            avatarUrl: row.avatar ? this.mediaUrl(row.avatar) : undefined,
           },
         };
     }
@@ -226,19 +251,10 @@ export class CatanStore {
     return secret;
   }
   async canRegister(identity: Identity) {
-    return (
-      this.hosting === 'server' &&
-      !identity.profileId &&
-      !!(await this.get(
-        'SELECT 1 FROM results WHERE guest=? AND profile IS NULL LIMIT 1',
-        identity.guestId,
-      ))
-    );
+    return !identity.profileId;
   }
   async register(identity: Identity, name: unknown, password: string) {
-    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     check(!identity.profileId, 'You are already signed in.');
-    check(await this.canRegister(identity), 'Complete your first game to create a profile.');
     const cleaned = cleanName(name);
     await this.rateLimit(`register:${identity.guestId}`, 5, 3600_000);
     const encoded = await passwordHash(password);
@@ -290,7 +306,6 @@ export class CatanStore {
     });
   }
   async login(identity: Identity, name: unknown, password: string) {
-    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     const cleaned = cleanName(name);
     await this.rateLimit(`login:${cleaned.toLowerCase()}`, 10, 15 * 60_000);
     const profile = await this.get<ProfileRow>(
@@ -374,6 +389,8 @@ export class CatanStore {
         color: 0,
         guestId: identity.guestId,
         profileId: identity.profileId,
+        avatarUrl: identity.avatarUrl,
+        sounds: identity.profileId ? await this.sounds(identity.profileId, true) : [],
       };
       const room: Room = {
         code,
@@ -404,60 +421,162 @@ export class CatanStore {
       403,
     );
     return this.transaction(async () => {
+      const existing = (await this.rooms()).find((r) => r.testing && !r.practice);
+      if (existing) {
+        check(
+          existing.seats.some((s) => s.id === existing.host && owns(identity, s)),
+          `Test table ${existing.code} already exists. Its host must delete it before creating another.`,
+          409,
+        );
+        return existing;
+      }
       const room = await this.createRoom(identity, name, capacity, guestName, false);
       room.testing = true;
       room.testPlayer = 0;
-      while (room.seats.length < capacity)
-        room.seats.push({
-          id: token(),
-          guestId: token(),
-          name: `Test player ${room.seats.length + 1}`,
-          color: room.seats.length,
-          colorLocked: true,
-        });
-      let game = createGame(
-        room.seats.map((s) => ({ id: s.id, name: s.name, color: s.color })),
-        secureRandom,
+      await this.save(room);
+      return room;
+    });
+  }
+  private checkTestHost(room: Room, identity: Identity, revision: number) {
+    check(
+      testControlsAvailable(room),
+      'Testing mode is available only in local development or a practice table.',
+      403,
+    );
+    check(
+      room.testing && room.seats.some((s) => s.id === room.host && owns(identity, s)),
+      'Only the test host can control these seats.',
+      403,
+    );
+    check(revision === room.revision, 'The game changed. Try again.', 409);
+  }
+  /** TESTING is an entry code, not shared mutable state: each tester owns one durable sandbox. */
+  async openPracticeRoom(identity: Identity): Promise<Room> {
+    check(this.hosting === 'server', 'Practice tables use the online server.', 400);
+    return this.transaction(async () => {
+      const existing = (await this.rooms()).find(
+        (room) =>
+          room.practice && room.seats.some((seat) => seat.id === room.host && owns(identity, seat)),
       );
-      while (game.phase.startsWith('setup')) {
+      if (existing) return existing;
+      let room = await this.createRoom(identity, 'Practice table', 4, 'You', false);
+      room.testing = true;
+      room.practice = true;
+      room.testPlayer = 0;
+      await this.save(room);
+      for (let index = 1; index < 4; index++)
+        room = await this.addTestPlayer(identity, room.code, room.revision);
+      room.seats.forEach((seat) => {
+        seat.colorLocked = true;
+      });
+      // Legal snake placement gives a playable board immediately, with normal starting resources.
+      room.game = createGame(room.seats, secureRandom);
+      while (room.game.phase.startsWith('setup')) {
+        const game = room.game;
         const action: Action =
           game.phase === 'setup-settlement'
             ? { type: 'settlement', vertex: settlementSites(game, game.active, true)[0] }
             : { type: 'road', edge: roadSites(game, game.active, game.setupVertex)[0] };
-        game = applyAction(game, game.active, action, secureRandom);
+        room.game = applyAction(game, game.active, action, secureRandom);
       }
-      // Stock every test hand from the bank so builds, cards and trades can be explored.
-      for (const player of game.players)
-        for (const resource of RESOURCES) {
-          const extra = Math.min(game.bank[resource], Math.max(0, 3 - player.resources[resource]));
-          player.resources[resource] += extra;
-          game.bank[resource] -= extra;
-        }
-      room.game = game;
       room.status = 'playing';
       room.startedAt = Date.now();
+      this.followTestTurn(room);
       room.revision++;
       await this.save(room);
       return room;
     });
   }
-  async selectTestPlayer(identity: Identity, code: string, revision: number, player: unknown) {
-    check(
-      testingAvailable() && this.hosting === 'local',
-      'Testing mode is available only in local development.',
-      403,
-    );
+  async resetPracticeRoom(identity: Identity, code: string, revision: number) {
+    return this.transaction(async () => {
+      const previous = await this.room(code);
+      this.checkTestHost(previous, identity, revision);
+      check(previous.practice, 'Only practice tables can restart setup.', 403);
+      const host = previous.seats.find((seat) => seat.id === previous.host)!;
+      const room: Room = {
+        code,
+        name: previous.name,
+        capacity: 3,
+        hosting: 'server',
+        winProbability: false,
+        testing: true,
+        practice: true,
+        testPlayer: 0,
+        host: host.id,
+        seats: [{ ...host, colorLocked: false }],
+        status: 'lobby',
+        revision: previous.revision + 1,
+        createdAt: previous.createdAt,
+        updatedAt: Date.now(),
+      };
+      await this.save(room);
+      return room;
+    });
+  }
+  async addTestPlayer(identity: Identity, code: string, revision: number) {
     return this.transaction(async () => {
       const room = await this.room(code);
-      check(
-        room.testing && room.seats.some((s) => s.id === room.host && owns(identity, s)),
-        'Only the test host can control these seats.',
-        403,
-      );
-      check(revision === room.revision, 'The game changed. Try again.', 409);
+      this.checkTestHost(room, identity, revision);
+      check(room.status === 'lobby', 'Add players before starting the game.');
+      check(room.seats.length < 6, 'The table already has six players.');
+      let number = room.seats.length + 1;
+      while (room.seats.some((s) => s.name.toLowerCase() === `test player ${number}`)) number++;
+      room.seats.push({
+        id: token(),
+        guestId: token(),
+        name: `Test player ${number}`,
+        color: [0, 1, 2, 3, 4, 5].find((c) => !room.seats.some((s, i) => (s.color ?? i) === c)),
+        simulated: true,
+      });
+      room.capacity = Math.max(room.capacity, room.seats.length) as Room['capacity'];
+      room.testPlayer = room.seats.length - 1;
+      room.revision++;
+      await this.save(room);
+      return room;
+    });
+  }
+  async deleteTestRoom(identity: Identity, code: string, revision: number) {
+    return this.transaction(async () => {
+      const room = await this.room(code);
+      this.checkTestHost(room, identity, revision);
+      for (const table of ['jobs', 'odds_history', 'results'])
+        await this.query(`DELETE FROM ${table} WHERE room=?`, code);
+      await this.query('DELETE FROM rooms WHERE code=?', code);
+    });
+  }
+  private followTestTurn(room: Room) {
+    if (!room.testing || !room.game) return;
+    const nextId =
+      room.status === 'starting'
+        ? room.opening!.contenders.find(
+            (id) =>
+              !room.opening!.rolls.some(
+                (r) => r.round === room.opening!.round && r.playerId === id,
+              ),
+          )
+        : room.game.players[
+            room.game.phase === 'discard'
+              ? Number(Object.keys(room.game.discard)[0])
+              : room.game.active
+          ]?.id;
+    const next = room.seats.findIndex(
+      (s) => s.id === nextId && (s.simulated || s.id === room.host),
+    );
+    room.testPlayer = next >= 0 ? next : room.seats.findIndex((s) => s.id === room.host);
+  }
+  async selectTestPlayer(identity: Identity, code: string, revision: number, player: unknown) {
+    return this.transaction(async () => {
+      const room = await this.room(code);
+      this.checkTestHost(room, identity, revision);
       check(
         Number.isInteger(player) && Number(player) >= 0 && Number(player) < room.seats.length,
         'Choose a test player.',
+      );
+      const selected = room.seats[Number(player)];
+      check(
+        selected.simulated || selected.id === room.host,
+        'This player controls their own seat.',
+        403,
       );
       room.testPlayer = Number(player);
       room.revision++;
@@ -469,6 +588,7 @@ export class CatanStore {
     return this.transaction(async () => {
       const room = await this.room(code);
       if (room.seats.some((s) => owns(identity, s))) return room;
+      check(!room.practice, 'Enter TESTING to open your own practice table.', 403);
       check(room.status === 'lobby', 'This game has already started.');
       check(room.seats.length < room.capacity, 'This room is full.');
       const cleaned = identity.name ?? cleanName(name);
@@ -482,6 +602,8 @@ export class CatanStore {
         color: [0, 1, 2, 3, 4, 5].find((c) => !room.seats.some((s, i) => (s.color ?? i) === c)),
         guestId: identity.guestId,
         profileId: identity.profileId,
+        avatarUrl: identity.avatarUrl,
+        sounds: identity.profileId ? await this.sounds(identity.profileId, true) : [],
       });
       room.revision++;
       await this.save(room);
@@ -497,7 +619,7 @@ export class CatanStore {
   ) {
     return this.transaction(async () => {
       const room = await this.room(code);
-      const seat = room.seats.find((s) => owns(identity, s));
+      const seat = controlledSeat(room, identity);
       check(seat && room.status === 'lobby', 'Choose your color before the game starts.', 403);
       check(revision === room.revision, 'The lobby changed. Try again.', 409);
       check(
@@ -544,7 +666,13 @@ export class CatanStore {
         'The game changed. Review the latest board and try again.',
         409,
       );
-      check(!room.testing || testingAvailable(), 'Test games require local development.', 403);
+      check(
+        !room.testing || testControlsAvailable(room),
+        'Test games require local development or a practice table.',
+        403,
+      );
+      const previousStatus = room.status;
+      const visualActorId = controlledSeat(room, identity)!.id;
       if (command === 'start') {
         check(
           seat.id === room.host && room.status === 'lobby',
@@ -572,8 +700,10 @@ export class CatanStore {
         );
         room.startedAt = Date.now();
         beginOpening(room, Date.now());
+        this.followTestTurn(room);
       } else if (command === 'roll-order') {
-        rollOpening(room, seat.id, secureRandom, Date.now());
+        rollOpening(room, controlledSeat(room, identity)!.id, secureRandom, Date.now());
+        this.followTestTurn(room);
       } else if (command === 'pause') {
         check(room.status === 'playing' && !room.pauseRequest, 'A pause cannot be requested now.');
         const voter = controlledSeat(room, identity)!;
@@ -609,7 +739,14 @@ export class CatanStore {
         });
       } else if (command === 'leave') {
         check(room.status === 'lobby', 'You can only leave before the game starts.');
+        check(!room.testing || seat.id !== room.host, 'Use Delete test table to close this table.');
+        const selectedId = room.seats[room.testPlayer ?? 0]?.id;
         room.seats = room.seats.filter((s) => s.id !== seat.id);
+        if (room.testing)
+          room.testPlayer = Math.max(
+            0,
+            room.seats.findIndex((s) => s.id === selectedId),
+          );
         if (!room.seats.length) {
           await this.query('DELETE FROM rooms WHERE code=?', code);
           return undefined;
@@ -632,11 +769,7 @@ export class CatanStore {
           const before = room.game;
           room.game = applyAction(room.game, player, action, secureRandom);
           recordVisuals(room, before, actor.id, action, Date.now());
-          if (room.testing)
-            room.testPlayer =
-              room.game.phase === 'discard'
-                ? Number(Object.keys(room.game.discard)[0])
-                : room.game.active;
+          this.followTestTurn(room);
         } catch (error) {
           if (error instanceof RuleError) throw new ServiceError(error.message);
           throw error;
@@ -648,6 +781,7 @@ export class CatanStore {
           await this.recordResults(room);
         }
       } else throw new ServiceError('Unknown room command.');
+      recordCommandEvents(room, previousStatus, visualActorId, command, Date.now());
       room.revision++;
       await this.save(room);
       return room;
@@ -770,6 +904,210 @@ export class CatanStore {
       .reverse()
       .map((r) => JSON.parse(r.data));
   }
+  private mediaUrl(id: string) {
+    return `/api/catan/media?id=${id}${this.hosting === 'local' ? '&hosting=local' : ''}`;
+  }
+  private async sounds(profileId: string, activeOnly = false) {
+    const rows = await this.all<{ id: string; name: string; emoji: string; active: number }>(
+      `SELECT id,name,emoji,active FROM profile_media WHERE profile=? AND kind='sound'${activeOnly ? ' AND active=1' : ''} ORDER BY created`,
+      profileId,
+    );
+    return rows.map((row) => ({ ...row, active: !!row.active, url: this.mediaUrl(row.id) }));
+  }
+  private requireProfile(identity: Identity) {
+    check(identity.profileId, 'Sign in to update your profile.', 401);
+    return identity.profileId;
+  }
+  private async syncProfile(profileId: string) {
+    const row = await this.get<{ name: string; avatar: string | null }>(
+      'SELECT COALESCE(f.display_name,p.name) name,f.avatar FROM profiles p LEFT JOIN profile_preferences f ON f.profile=p.id WHERE p.id=?',
+      profileId,
+    );
+    if (!row) return;
+    const sounds = await this.sounds(profileId, true);
+    for (const room of await this.rooms()) {
+      if (!room.seats.some((seat) => seat.profileId === profileId)) continue;
+      for (const seat of room.seats.filter((seat) => seat.profileId === profileId)) {
+        seat.name = row.name;
+        seat.avatarUrl = row.avatar ? this.mediaUrl(row.avatar) : undefined;
+        seat.sounds = sounds;
+        const player = room.game?.players.find((player) => player.id === seat.id);
+        if (player) player.name = row.name;
+      }
+      room.revision++;
+      await this.save(room);
+    }
+  }
+  async updateProfile(identity: Identity, displayName: unknown) {
+    const profileId = this.requireProfile(identity);
+    const name = cleanName(displayName);
+    return this.transaction(async () => {
+      // Room names must remain distinguishable when changing a display name mid-game.
+      check(
+        !(await this.rooms()).some(
+          (room) =>
+            !['finished', 'ended'].includes(room.status) &&
+            room.seats.some((seat) => seat.profileId === profileId) &&
+            room.seats.some(
+              (seat) =>
+                seat.profileId !== profileId && seat.name.toLowerCase() === name.toLowerCase(),
+            ),
+        ),
+        'Another player at your table already uses that name.',
+      );
+      await this.query(
+        'INSERT INTO profile_preferences(profile,display_name) VALUES(?,?) ON CONFLICT(profile) DO UPDATE SET display_name=EXCLUDED.display_name',
+        profileId,
+        name,
+      );
+      await this.syncProfile(profileId);
+    });
+  }
+  async saveMedia(
+    identity: Identity,
+    kind: 'avatar' | 'sound',
+    mime: string,
+    data: Buffer,
+    name: unknown,
+    emoji: unknown,
+  ) {
+    const profileId = this.requireProfile(identity);
+    check(
+      data.length > 0 && data.length <= 262144,
+      'Keep this recording or image below 256 KB.',
+      413,
+    );
+    const type = mime.split(';')[0].trim().toLowerCase();
+    const imageValid =
+      (type === 'image/png' &&
+        data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) ||
+      (type === 'image/jpeg' && data[0] === 255 && data[1] === 216 && data[2] === 255) ||
+      (type === 'image/webp' &&
+        data.toString('ascii', 0, 4) === 'RIFF' &&
+        data.toString('ascii', 8, 12) === 'WEBP');
+    const soundValid =
+      (type === 'audio/webm' && data.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]))) ||
+      (type === 'audio/ogg' && data.toString('ascii', 0, 4) === 'OggS') ||
+      (type === 'audio/mp4' && data.toString('ascii', 4, 8) === 'ftyp');
+    check(
+      kind === 'avatar' ? imageValid : soundValid,
+      kind === 'avatar'
+        ? 'Choose a JPEG, PNG or WebP picture.'
+        : 'This recording format is not supported.',
+    );
+    const title = kind === 'sound' ? cleanName(name) : 'Profile picture';
+    const icon =
+      typeof emoji === 'string' && ['🎉', '🐑', '⚓', '😈', '🎲', '👏', '😂', '💬'].includes(emoji)
+        ? emoji
+        : '💬';
+    await this.rateLimit(`media:${profileId}`, 30, 3600_000);
+    return this.transaction(async () => {
+      const existing = await this.sounds(profileId);
+      if (kind === 'sound')
+        check(existing.length < 10, 'You can save up to 10 sounds. Delete one to record another.');
+      const id = token();
+      await this.query(
+        'INSERT INTO profile_media(id,profile,kind,mime,data,name,emoji,active,created) VALUES(?,?,?,?,?,?,?,?,?)',
+        id,
+        profileId,
+        kind,
+        type,
+        data.toString('base64'),
+        title,
+        icon,
+        kind === 'sound' && existing.filter((sound) => sound.active).length < 3 ? 1 : 0,
+        Date.now(),
+      );
+      if (kind === 'avatar') {
+        await this.query(
+          'INSERT INTO profile_preferences(profile,display_name,avatar) VALUES(?,?,?) ON CONFLICT(profile) DO UPDATE SET avatar=EXCLUDED.avatar',
+          profileId,
+          identity.name ?? identity.username!,
+          id,
+        );
+        await this.query(
+          "DELETE FROM profile_media WHERE profile=? AND kind='avatar' AND id<>?",
+          profileId,
+          id,
+        );
+      }
+      await this.syncProfile(profileId);
+      return { id, url: this.mediaUrl(id) };
+    });
+  }
+  async updateSound(identity: Identity, id: unknown, active: unknown, remove = false) {
+    const profileId = this.requireProfile(identity);
+    check(typeof id === 'string', 'Choose a sound.');
+    return this.transaction(async () => {
+      const sounds = await this.sounds(profileId);
+      const sound = sounds.find((sound) => sound.id === id);
+      check(sound, 'Sound not found.', 404);
+      if (remove)
+        await this.query('DELETE FROM profile_media WHERE id=? AND profile=?', id, profileId);
+      else {
+        check(typeof active === 'boolean', 'Choose whether this sound is active.');
+        check(
+          !active || sound.active || sounds.filter((sound) => sound.active).length < 3,
+          'Only 3 sounds can be active. Turn one off first.',
+        );
+        await this.query(
+          'UPDATE profile_media SET active=? WHERE id=? AND profile=?',
+          active ? 1 : 0,
+          id,
+          profileId,
+        );
+      }
+      await this.syncProfile(profileId);
+    });
+  }
+  async media(identity: Identity, id: string) {
+    check(/^[\w-]{43}$/.test(id), 'Media not found.', 404);
+    const row = await this.get<{ profile: string; kind: string; mime: string; data: string }>(
+      'SELECT profile,kind,mime,data FROM profile_media WHERE id=?',
+      id,
+    );
+    check(row, 'Media not found.', 404);
+    if (row.kind === 'sound' && identity.profileId !== row.profile) {
+      const rooms = await this.rooms();
+      check(
+        rooms.some(
+          (room) =>
+            room.seats.some((seat) => owns(identity, seat)) &&
+            room.seats.some((seat) => seat.profileId === row.profile),
+        ),
+        'This sound belongs to another table.',
+        403,
+      );
+    }
+    return { mime: row.mime, data: Buffer.from(row.data, 'base64') };
+  }
+  async playSound(identity: Identity, code: string, soundId: unknown) {
+    const profileId = this.requireProfile(identity);
+    check(typeof soundId === 'string', 'Choose a sound.');
+    return this.transaction(async () => {
+      const room = await this.room(code);
+      const seat = room.seats.find((seat) => owns(identity, seat));
+      check(
+        seat && (!room.testing || controlledSeat(room, identity)?.id === seat.id),
+        'Only your own seat can play your sounds.',
+        403,
+      );
+      check(
+        ['lobby', 'starting', 'playing', 'paused'].includes(room.status),
+        'This table has ended.',
+      );
+      const sound = (await this.sounds(profileId, true)).find((sound) => sound.id === soundId);
+      check(sound, 'Choose one of your active sounds.', 404);
+      await this.rateLimit(`sound:${profileId}`, 1, 6000);
+      const now = Date.now();
+      room.soundEvents = [
+        ...(room.soundEvents ?? []).filter((event) => event.at > now - 15000),
+        { ...sound, id: token(), soundId: sound.id, playerId: seat.id, at: now },
+      ].slice(-12);
+      // Sound reactions never change the game revision or cancel a player's unfinished move.
+      await this.save(room);
+    });
+  }
   async leaderboard() {
     const rows = await this.all<{
       name: string;
@@ -779,7 +1117,7 @@ export class CatanStore {
       averagePoints: number;
       winRate: number;
     }>(
-      `SELECT p.name,COUNT(*) games,SUM(r.won) wins,SUM(r.points) points,ROUND(AVG(r.points),2) "averagePoints",ROUND(100.0*SUM(r.won)/COUNT(*),1) "winRate" FROM results r JOIN profiles p ON r.profile=p.id GROUP BY p.id ORDER BY "winRate" DESC,games DESC,"averagePoints" DESC LIMIT 100`,
+      `SELECT COALESCE(f.display_name,p.name) name,COUNT(*) games,SUM(r.won) wins,SUM(r.points) points,ROUND(AVG(r.points),2) "averagePoints",ROUND(100.0*SUM(r.won)/COUNT(*),1) "winRate" FROM results r JOIN profiles p ON r.profile=p.id LEFT JOIN profile_preferences f ON f.profile=p.id GROUP BY p.id,f.display_name ORDER BY "winRate" DESC,games DESC,"averagePoints" DESC LIMIT 100`,
     );
     const anonymous = await this.get<{ appearances: number; wins: number }>(
       'SELECT COUNT(*) appearances,COALESCE(SUM(won),0) wins FROM results WHERE profile IS NULL',
@@ -790,7 +1128,6 @@ export class CatanStore {
     return { rows, anonymous: anonymous!, totals: totals! };
   }
   async profile(identity: Identity) {
-    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     check(identity.profileId, 'Sign in to see personal statistics.', 401);
     const results = await this.all<ResultRow>(
       'SELECT * FROM results WHERE profile=? ORDER BY finished DESC',
@@ -803,7 +1140,7 @@ export class CatanStore {
     const history = await Promise.all(
       results.map(async (r) => {
         const opponents = await this.all<{ name: string | null; points: number; won: number }>(
-          'SELECT p.name,r.points,r.won FROM results r LEFT JOIN profiles p ON r.profile=p.id WHERE r.room=? AND r.seat<>?',
+          'SELECT COALESCE(f.display_name,p.name) name,r.points,r.won FROM results r LEFT JOIN profiles p ON r.profile=p.id LEFT JOIN profile_preferences f ON f.profile=p.id WHERE r.room=? AND r.seat<>?',
           r.room,
           r.seat,
         );
@@ -824,6 +1161,9 @@ export class CatanStore {
     );
     return {
       name: identity.name,
+      username: identity.username ?? identity.name,
+      avatarUrl: identity.avatarUrl,
+      sounds: await this.sounds(identity.profileId),
       games,
       wins,
       winRate: games ? (100 * wins) / games : 0,

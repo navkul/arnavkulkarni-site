@@ -139,7 +139,7 @@ test('registration after first finish claims only own result; anonymous opponent
   try {
     const { room: l, sessions } = await lobby(s);
     const host = sessions[0].identity;
-    await assert.rejects(s.register(host, 'Alice', 'correct horse battery'), /first game/);
+    assert.equal(await s.canRegister(host), true);
     let room = (await s.change(host, l.code, l.revision, 'start'))!;
     room = await completeFixture(s, room, host);
     assert.equal(room.status, 'finished');
@@ -386,7 +386,7 @@ test('only the host can end early; closed games persist without results, new job
     assert.equal(roomView(room, host).legal!.roll, false);
     assert.equal((await store.room(room.code)).status, 'ended');
     assert.equal((await store.query('SELECT * FROM results')).length, 0);
-    assert.equal(await store.canRegister(host), false);
+    assert.equal(await store.canRegister(host), true);
     assert.equal(
       (await store.query('SELECT * FROM jobs WHERE room=?', room.code)).length,
       jobsBefore,
@@ -489,5 +489,102 @@ test('simultaneous table-offer acceptances transfer cards to exactly one player'
     );
   } finally {
     await store.close();
+  }
+});
+
+test('deployed practice rooms are private, durable, controllable, resettable and unranked', async () => {
+  const previous = { NODE_ENV: process.env.NODE_ENV, VERCEL: process.env.VERCEL };
+  Object.assign(process.env, { NODE_ENV: 'production', VERCEL: '1' });
+  const store = await freshStore();
+  try {
+    const first = await store.session();
+    const second = await store.session();
+    const [initial, duplicate] = await Promise.all([
+      store.openPracticeRoom(first.identity),
+      store.openPracticeRoom(first.identity),
+    ]);
+    assert.equal(initial.code, duplicate.code);
+    assert.equal(initial.practice, true);
+    assert.equal(initial.hosting, 'server');
+    assert.equal(initial.status, 'playing');
+    assert.equal(initial.game!.phase, 'roll');
+    assert.equal(initial.seats.length, 4);
+    assert.equal(initial.game!.board.vertices.filter((v) => v.building).length, 8);
+    conserve(initial.game!);
+    assert.equal(roomView(initial, first.identity).testing, true);
+    assert.equal(roomView(initial, first.identity).legal!.roll, true);
+    const other = await store.openPracticeRoom(second.identity);
+    assert.notEqual(other.code, initial.code);
+    await assert.rejects(
+      store.join(second.identity, initial.code, 'Intruder'),
+      /own practice table/,
+    );
+    await assert.rejects(
+      store.selectTestPlayer(second.identity, initial.code, initial.revision, 1),
+      /Only the test host/,
+    );
+    await assert.rejects(
+      store.deleteTestRoom(second.identity, initial.code, initial.revision),
+      /Only the test host/,
+    );
+    await assert.rejects(
+      store.resetPracticeRoom(second.identity, initial.code, initial.revision),
+      /Only the test host/,
+    );
+    const ordinary = await store.createRoom(first.identity, 'Ranked table', 3, 'You');
+    await assert.rejects(
+      store.addTestPlayer(first.identity, ordinary.code, ordinary.revision),
+      /Testing mode/,
+    );
+    await assert.rejects(
+      store.resetPracticeRoom(first.identity, ordinary.code, ordinary.revision),
+      /Testing mode/,
+    );
+    let room = await store.selectTestPlayer(first.identity, initial.code, initial.revision, 2);
+    assert.equal(roomView(room, first.identity).me, 2);
+    room = await store.selectTestPlayer(first.identity, room.code, room.revision, 0);
+    room.game!.board.vertices.forEach((vertex) => {
+      delete vertex.building;
+    });
+    room = await completeFixture(store, room, first.identity);
+    assert.equal(room.status, 'finished');
+    assert.equal(
+      Number(
+        (await store.query('SELECT COUNT(*) count FROM results WHERE room=?', room.code))[0].count,
+      ),
+      0,
+    );
+    assert.equal((await store.pendingJobs(room.code)).length, 0);
+    const reopened = new CatanStore(testUrl!);
+    try {
+      const session = await reopened.session(first.secret);
+      assert.equal((await reopened.openPracticeRoom(session.identity)).code, room.code);
+    } finally {
+      await reopened.close();
+    }
+    room = await store.resetPracticeRoom(first.identity, room.code, room.revision);
+    assert.equal(room.status, 'lobby');
+    assert.equal(room.game, undefined);
+    assert.equal(room.seats.length, 1);
+    assert.equal(room.seats[0].colorLocked, false);
+    for (let i = 1; i < 6; i++)
+      room = await store.addTestPlayer(first.identity, room.code, room.revision);
+    assert.equal(room.capacity, 6);
+    await assert.rejects(
+      store.addTestPlayer(first.identity, room.code, room.revision),
+      /six players/,
+    );
+    room = (await store.change(first.identity, room.code, room.revision, 'start'))!;
+    assert.equal(room.status, 'starting');
+    assert.equal(room.game!.board.vertices.filter((v) => v.building).length, 0);
+    await store.deleteTestRoom(first.identity, room.code, room.revision);
+    await assert.rejects(store.room(room.code), /not found/i);
+    assert.equal((await store.room(other.code)).status, 'playing');
+  } finally {
+    await store.close();
+    for (const key of ['NODE_ENV', 'VERCEL'] as const) {
+      if (previous[key] === undefined) delete process.env[key];
+      else Object.assign(process.env, { [key]: previous[key] });
+    }
   }
 });

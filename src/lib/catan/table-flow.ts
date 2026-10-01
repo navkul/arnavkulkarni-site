@@ -1,13 +1,19 @@
 import { ServiceError, type Room } from './store.ts';
 import type { Action, Game } from './types.ts';
+import { recordActionEvents } from './visual-events.ts';
+import {
+  DICE_DURATION_MS,
+  DICE_LEAD_MS,
+  OPENING_COUNTDOWN_MS,
+  OPENING_REVEAL_MS,
+} from './motion-timing.ts';
 
-export const DICE_LEAD_MS = 1900;
-export const DICE_DURATION_MS = 1800;
+export { DICE_DURATION_MS, DICE_LEAD_MS } from './motion-timing.ts';
 export function beginOpening(room: Room, now: number) {
   room.status = 'starting';
   room.opening = {
-    revealAt: now + 3000,
-    readyAt: now + 8500,
+    revealAt: now + OPENING_COUNTDOWN_MS,
+    readyAt: now + OPENING_COUNTDOWN_MS + OPENING_REVEAL_MS,
     round: 1,
     contenders: room.seats.map((s) => s.id),
     rolls: [],
@@ -81,4 +87,5 @@ export function recordVisuals(
       });
   }
   room.awardEvents = events;
+  recordActionEvents(room, before, playerId, action, now);
 }
