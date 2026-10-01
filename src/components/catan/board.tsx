@@ -1,5 +1,6 @@
 'use client';
-import { useState } from 'react';
+import { useId, useState } from 'react';
+import { TerrainArt, PortArt } from './art';
 import type { Board as BoardState } from '@/lib/catan/types';
 export const PLAYER_COLORS = ['#c65335', '#287eb2', '#d29621', '#7763b6', '#448369', '#c36192'];
 export const RESOURCE_COLORS = {
@@ -19,6 +20,7 @@ export default function Board({
   onEdge,
   onHex,
   selectedEdges = [],
+  reveal = false,
 }: {
   board: BoardState;
   vertices: number[];
@@ -28,10 +30,12 @@ export default function Board({
   onEdge: (id: number) => void;
   onHex: (id: number) => void;
   selectedEdges?: number[];
+  reveal?: boolean;
 }) {
+  const artworkId = useId();
   const [zoom, setZoom] = useState(false);
-  const extentX = Math.max(...board.vertices.map((v) => Math.abs(v.x))) * 60 + 60;
-  const extentY = Math.max(...board.vertices.map((v) => Math.abs(v.y))) * 60 + 50;
+  const extentX = Math.max(...board.vertices.map((v) => Math.abs(v.x))) * 60 + 82;
+  const extentY = Math.max(...board.vertices.map((v) => Math.abs(v.y))) * 60 + 82;
   const key = (event: React.KeyboardEvent, fn: () => void) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -39,9 +43,18 @@ export default function Board({
     }
   };
   return (
-    <div className="ct-board-shell">
+    <div className={`ct-board-shell ${reveal ? 'ct-board-reveal' : ''}`}>
       <div className="ct-board-toolbar">
-        <span>Tap a highlighted spot to play</span>
+        <span>
+          {reveal ? (
+            <>
+              <span className="ct-shuffle-label">Shuffling the island…</span>
+              <span className="ct-ready-label">Your island is ready</span>
+            </>
+          ) : (
+            'Tap a highlighted spot to play'
+          )}
+        </span>
         <button onClick={() => setZoom(!zoom)} aria-pressed={zoom}>
           {zoom ? 'Fit island' : 'Zoom in'}
         </button>
@@ -54,6 +67,20 @@ export default function Board({
           aria-label="Catan island board"
         >
           <defs>
+            {Object.keys(RESOURCE_COLORS).map((resource) => (
+              <symbol key={resource} id={`${artworkId}-${resource}`} viewBox="-60 -60 120 120">
+                <TerrainArt kind={resource as keyof typeof RESOURCE_COLORS} />
+              </symbol>
+            ))}
+            {board.hexes.map((h) => (
+              <clipPath key={h.id} id={`${artworkId}-clip-${h.id}`}>
+                <polygon
+                  points={h.vertices
+                    .map((id) => `${board.vertices[id].x * 60},${board.vertices[id].y * 60}`)
+                    .join(' ')}
+                />
+              </clipPath>
+            ))}
             <filter id="tile-shadow">
               <feDropShadow dx="0" dy="3" stdDeviation="3" floodOpacity=".12" />
             </filter>
@@ -64,7 +91,8 @@ export default function Board({
               role={robber && h.id !== board.robber ? 'button' : undefined}
               tabIndex={robber && h.id !== board.robber ? 0 : undefined}
               aria-label={`Hex ${h.id + 1}: ${h.resource}, ${h.number || 'no production'}${h.id === board.robber ? ', robber' : ''}`}
-              className={robber && h.id !== board.robber ? 'ct-hex-target' : ''}
+              className={`ct-tile ${robber && h.id !== board.robber ? 'ct-hex-target' : ''}`}
+              style={{ animationDelay: `${((h.id * 7) % board.hexes.length) * 24}ms` }}
               onClick={() => robber && h.id !== board.robber && onHex(h.id)}
               onKeyDown={(e) => key(e, () => robber && h.id !== board.robber && onHex(h.id))}
             >
@@ -77,9 +105,23 @@ export default function Board({
                 strokeWidth="3"
                 filter="url(#tile-shadow)"
               />
-              <text x={h.x * 60} y={h.y * 60 - 29} textAnchor="middle" className="ct-terrain">
-                {h.resource}
-              </text>
+              <g clipPath={`url(#${artworkId}-clip-${h.id})`}>
+                <use
+                  href={`#${artworkId}-${h.resource}`}
+                  x={h.x * 60 - 61}
+                  y={h.y * 60 - 61}
+                  width="122"
+                  height="122"
+                />
+              </g>
+              <polygon
+                points={h.vertices
+                  .map((id) => `${board.vertices[id].x * 60},${board.vertices[id].y * 60}`)
+                  .join(' ')}
+                fill="none"
+                stroke="#f6e3ba"
+                strokeWidth="2.5"
+              />
               {h.number > 0 && (
                 <>
                   <circle cx={h.x * 60} cy={h.y * 60 + 2} r="18" fill="#fff6de" />
@@ -133,15 +175,21 @@ export default function Board({
                 px = x + (x / norm) * 35,
                 py = y + (y / norm) * 35;
               return (
-                <g key={`port-${e.id}`}>
+                <g
+                  key={`port-${e.id}`}
+                  aria-label={`${a.port === 'any' ? '3:1 any' : `2:1 ${a.port}`} port`}
+                >
                   <path
                     d={`M${a.x * 60},${a.y * 60} L${px},${py} L${b.x * 60},${b.y * 60}`}
                     fill="none"
-                    stroke="#f4edd4"
-                    strokeWidth="2"
+                    stroke="#cfb080"
+                    strokeWidth="4"
                   />
-                  <rect x={px - 28} y={py - 10} width="56" height="20" rx="7" fill="#f4edd4" />
-                  <text x={px} y={py + 4} textAnchor="middle" fontSize="10" fill="#234d51">
+                  <g transform={`translate(${px} ${py - 7})`}>
+                    <PortArt />
+                  </g>
+                  <rect x={px - 29} y={py + 17} width="58" height="17" rx="5" fill="#f4edd4" />
+                  <text x={px} y={py + 29} textAnchor="middle" fontSize="10" fill="#234d51">
                     {a.port === 'any' ? '3:1 any' : `2:1 ${a.port}`}
                   </text>
                 </g>

@@ -15,6 +15,8 @@ export function roomSummary(room: Room, identity: Identity) {
     code: room.code,
     name: room.name,
     capacity: room.capacity,
+    hosting: room.hosting ?? 'server',
+    winProbability: room.winProbability !== false,
     players: room.seats.length,
     status: room.status,
     mine: room.seats.some((s) => owns(identity, s)),
@@ -32,6 +34,8 @@ export function roomView(room: Room, identity: Identity) {
     code: room.code,
     name: room.name,
     capacity: room.capacity,
+    hosting: room.hosting ?? 'server',
+    winProbability: room.winProbability !== false,
     status: room.status,
     revision: room.revision,
     createdAt: room.createdAt,
@@ -72,6 +76,7 @@ export function roomView(room: Room, identity: Identity) {
               resourcesCount: cardCount(p.resources),
               developmentCount: p.development.length,
               knights: p.knights,
+              playedDevelopment: p.playedDevelopment ?? [],
               points: score(game, i, i === player || game.phase === 'finished'),
             })),
             hand: self
@@ -122,8 +127,13 @@ export function roomView(room: Room, identity: Identity) {
           }
         : undefined,
     odds: seat ? room.odds : undefined,
-    canPause: !!seat?.profileId && room.status === 'playing',
-    canResume: !!seat?.profileId && room.status === 'paused',
+    canEnd: !!seat && seat.id === room.host && ['playing', 'paused'].includes(room.status),
+    canPause:
+      (!!seat?.profileId || (room.hosting === 'local' && seat?.id === room.host)) &&
+      room.status === 'playing',
+    canResume:
+      (!!seat?.profileId || (room.hosting === 'local' && seat?.id === room.host)) &&
+      room.status === 'paused',
   };
 }
 export type RoomView = ReturnType<typeof roomView>;

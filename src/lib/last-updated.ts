@@ -93,6 +93,7 @@ const readGitHubTimestamp = cache(async (relativePath?: string) => {
 });
 
 export const getSiteLastUpdated = cache(async () => {
+  if (process.env.CATAN_OFFLINE_ONLY === '1') return null;
   return readGitTimestamp(['log', '-1', '--format=%cI', 'HEAD']) ?? readGitHubTimestamp();
 });
 

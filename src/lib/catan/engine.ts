@@ -64,6 +64,7 @@ export function createGame(
     ...p,
     resources: emptyCards(),
     development: [],
+    playedDevelopment: [],
     knights: 0,
     metrics: {
       produced: emptyCards(),
@@ -267,7 +268,8 @@ function execute(game: Game, player: number, action: Action, random: Random) {
         !game.paired &&
         offer &&
         offer.id === action.offer &&
-        offer.to === player &&
+        (offer.to === player || offer.to === 'all') &&
+        offer.from !== player &&
         offer.from === game.active,
       'This offer is no longer available.',
     );
@@ -424,6 +426,7 @@ function execute(game: Game, player: number, action: Action, random: Random) {
         'Place both free roads when possible.',
       );
     } else throw new RuleError('Unknown development card.');
+    (self.playedDevelopment ??= []).push({ kind: action.card, turn: game.turn });
     game.offer = undefined;
     note(game, `${self.name} played ${action.card}.`);
   } else {
@@ -478,8 +481,9 @@ function execute(game: Game, player: number, action: Action, random: Random) {
       case 'offer':
         requireRule(!game.paired, 'The paired player can only trade with the bank.');
         requireRule(
-          Number.isInteger(action.to) && !!game.players[action.to] && action.to !== player,
-          'Choose another player.',
+          action.to === 'all' ||
+            (Number.isInteger(action.to) && !!game.players[action.to] && action.to !== player),
+          'Choose another player or the whole table.',
         );
         requireRule(
           validCards(action.give) &&

@@ -1,12 +1,17 @@
 import { after, NextRequest, NextResponse } from 'next/server';
-import { getStore, queueEvaluation } from '@/lib/catan/server';
+import { getStore, queueEvaluation, offlineOnly } from '@/lib/catan/server';
 import { owns, ServiceError } from '@/lib/catan/store';
 import { roomSummary, roomView } from '@/lib/catan/view';
+import { networkInterfaces } from 'node:os';
 import { parseAction } from '@/lib/catan/input';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-const COOKIE = 'catan_session';
+function sessionCookie(request: NextRequest) {
+  return request.nextUrl.searchParams.get('hosting') === 'local' || offlineOnly()
+    ? 'catan_local_session'
+    : 'catan_session';
+}
 const privateHeaders = {
   'Cache-Control': 'no-store, private',
   Vary: 'Cookie',
@@ -15,7 +20,7 @@ const privateHeaders = {
 function response(request: NextRequest, data: unknown, secret?: string, status = 200) {
   const res = NextResponse.json(data, { status, headers: privateHeaders });
   if (secret)
-    res.cookies.set(COOKIE, secret, {
+    res.cookies.set(sessionCookie(request), secret, {
       httpOnly: true,
       sameSite: 'lax',
       secure: request.nextUrl.protocol === 'https:',
@@ -60,8 +65,13 @@ async function readBody(request: NextRequest) {
 }
 export async function GET(request: NextRequest) {
   try {
-    const store = getStore();
-    const { identity, secret } = await store.session(request.cookies.get(COOKIE)?.value);
+    const requested = request.nextUrl.searchParams.get('hosting');
+    if (requested && !['server', 'local'].includes(requested))
+      throw new ServiceError('Invalid hosting mode.');
+    const store = getStore(requested === 'local' || offlineOnly() ? 'local' : 'server');
+    const { identity, secret } = await store.session(
+      request.cookies.get(sessionCookie(request))?.value,
+    );
     const query = request.nextUrl.searchParams;
     if (query.has('leaderboard')) return response(request, await store.leaderboard(), secret);
     if (query.has('profile')) return response(request, await store.profile(identity), secret);
@@ -83,6 +93,17 @@ export async function GET(request: NextRequest) {
     return response(
       request,
       {
+        hosting: store.hosting,
+        localAddresses:
+          store.hosting === 'local'
+            ? Object.values(networkInterfaces())
+                .flat()
+                .filter((n) => n && n.family === 'IPv4' && !n.internal)
+                .map(
+                  (n) =>
+                    `http://${n!.address}${request.nextUrl.port ? ':' + request.nextUrl.port : ''}/catan?hosting=local`,
+                )
+            : [],
         user: {
           name: identity.name ?? null,
           registered: !!identity.profileId,
@@ -112,8 +133,11 @@ export async function POST(request: NextRequest) {
     if (!request.headers.get('content-type')?.startsWith('application/json'))
       throw new ServiceError('Use application/json.', 415);
     const body = await readBody(request);
-    const store = getStore();
-    const session = await store.session(request.cookies.get(COOKIE)?.value);
+    const requested = request.nextUrl.searchParams.get('hosting');
+    if (requested && !['server', 'local'].includes(requested))
+      throw new ServiceError('Invalid hosting mode.');
+    const store = getStore(requested === 'local' || offlineOnly() ? 'local' : 'server');
+    const session = await store.session(request.cookies.get(sessionCookie(request))?.value);
     const { identity } = session;
     await store.rateLimit(`session:${identity.sessionHash}`, 180);
     if (body.command === 'register' || body.command === 'login') {
@@ -125,12 +149,20 @@ export async function POST(request: NextRequest) {
     }
     if (body.command === 'logout')
       return response(request, { ok: true }, await store.logout(identity));
+    if (body.selfHost === true && store.hosting !== 'local')
+      throw new ServiceError('Open the local host before starting a self-hosted table.');
     if (body.command === 'create')
       return response(
         request,
         {
           room: roomView(
-            await store.createRoom(identity, body.name, Number(body.capacity), body.guestName),
+            await store.createRoom(
+              identity,
+              body.name,
+              Number(body.capacity),
+              body.guestName,
+              body.winProbability === undefined ? true : (body.winProbability as boolean),
+            ),
             identity,
           ),
         },
@@ -144,14 +176,16 @@ export async function POST(request: NextRequest) {
         { room: roomView(await store.join(identity, code, body.name), identity) },
         session.secret,
       );
-    if (!['start', 'pause', 'resume', 'leave', 'action'].includes(body.command as string))
+    if (
+      !['start', 'pause', 'resume', 'leave', 'action', 'end-game'].includes(body.command as string)
+    )
       throw new ServiceError('Unknown command.');
     const action = body.command === 'action' ? parseAction(body.action) : undefined;
     const room = await store.change(
       identity,
       code,
       body.revision as number,
-      body.command as 'start' | 'pause' | 'resume' | 'leave' | 'action',
+      body.command as 'start' | 'pause' | 'resume' | 'leave' | 'action' | 'end-game',
       action,
     );
     if (room?.game) after(() => queueEvaluation(room));

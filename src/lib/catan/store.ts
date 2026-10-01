@@ -1,5 +1,4 @@
-import { Pool, type PoolClient } from 'pg';
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { LocalDatabase, PostgresDatabase, type Database } from './database.ts';
 import {
   randomBytes,
   randomInt,
@@ -50,10 +49,12 @@ export interface Odds {
 export interface Room {
   code: string;
   name: string;
-  capacity: 4 | 6;
+  capacity: 3 | 4 | 5 | 6;
+  hosting?: 'server' | 'local';
+  winProbability?: boolean;
   host: string;
   seats: Seat[];
-  status: 'lobby' | 'playing' | 'paused' | 'finished';
+  status: 'lobby' | 'playing' | 'paused' | 'finished' | 'ended';
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -108,69 +109,17 @@ export function cleanName(name: unknown) {
   return normalized;
 }
 export class CatanStore {
-  readonly pool: Pool;
-  private readonly context = new AsyncLocalStorage<PoolClient>();
-  private readonly ready: Promise<void>;
-  constructor(url: string) {
-    this.pool = new Pool({
-      connectionString: url,
-      max: 5,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 10_000,
-    });
-    this.ready = this.initialize();
-  }
-  private async initialize() {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(739214, 0)');
-      await client.query(`
-        CREATE SCHEMA IF NOT EXISTS catan;
-        CREATE TABLE IF NOT EXISTS catan.profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, password TEXT NOT NULL, created BIGINT NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.sessions (hash TEXT PRIMARY KEY, guest TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), expires BIGINT NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.rooms (code TEXT PRIMARY KEY, state TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.results (room TEXT NOT NULL, seat TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), guest TEXT NOT NULL, points INTEGER NOT NULL, won INTEGER NOT NULL, players INTEGER NOT NULL, turns INTEGER NOT NULL, finished BIGINT NOT NULL, metrics TEXT NOT NULL, PRIMARY KEY(room,seat));
-        CREATE INDEX IF NOT EXISTS results_profile ON catan.results(profile);
-        CREATE INDEX IF NOT EXISTS results_guest ON catan.results(guest);
-        CREATE TABLE IF NOT EXISTS catan.odds_history (room TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(room,revision));
-        CREATE TABLE IF NOT EXISTS catan.limits (key TEXT PRIMARY KEY, start BIGINT NOT NULL, count INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.jobs (room TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, published BIGINT NOT NULL DEFAULT 0, completed BOOLEAN NOT NULL DEFAULT FALSE, PRIMARY KEY(room,revision));
-      `);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+  private readonly database: Database;
+  readonly hosting: 'server' | 'local';
+  constructor(url: string, hosting: 'server' | 'local' = 'server') {
+    this.hosting = hosting;
+    this.database = hosting === 'local' ? new LocalDatabase(url) : new PostgresDatabase(url);
   }
   async close() {
-    await this.ready;
-    await this.pool.end();
+    await this.database.close();
   }
   async query(sql: string, ...params: (string | number | null)[]) {
-    await this.ready;
-    let index = 0;
-    const text = sql
-      .replace(/\?/g, () => `$${++index}`)
-      .replace(
-        /\b(FROM|INTO|UPDATE|JOIN) (profiles|sessions|rooms|results|odds_history|limits|jobs)\b/g,
-        '$1 catan.$2',
-      );
-    const result = await (this.context.getStore() ?? this.pool).query(text, params);
-    // PostgreSQL returns BIGINT and NUMERIC as strings; all these values are bounded counts/timestamps.
-    return result.rows.map((row) =>
-      Object.fromEntries(
-        Object.entries(row).map(([key, value]) => [
-          key,
-          result.fields.some((f) => f.name === key && [20, 1700].includes(f.dataTypeID)) &&
-          value !== null
-            ? Number(value)
-            : value,
-        ]),
-      ),
-    );
+    return this.database.query(sql, params);
   }
   private async get<T>(sql: string, ...params: (string | number | null)[]): Promise<T | undefined> {
     return (await this.query(sql, ...params))[0] as T | undefined;
@@ -179,23 +128,7 @@ export class CatanStore {
     return (await this.query(sql, ...params)) as T[];
   }
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
-    await this.ready;
-    if (this.context.getStore()) return fn();
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      // Short writes are serialized across instances, including profile claims and room creation.
-      // Simulations and password hashing always run outside this transaction.
-      await client.query('SELECT pg_advisory_xact_lock(739214, 1)');
-      const result = await this.context.run(client, fn);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.database.transaction(fn);
   }
   async rateLimit(key: string, maximum: number, window = 60_000) {
     return this.transaction(async () => {
@@ -261,6 +194,7 @@ export class CatanStore {
   }
   async canRegister(identity: Identity) {
     return (
+      this.hosting === 'server' &&
       !identity.profileId &&
       !!(await this.get(
         'SELECT 1 FROM results WHERE guest=? AND profile IS NULL LIMIT 1',
@@ -269,6 +203,7 @@ export class CatanStore {
     );
   }
   async register(identity: Identity, name: unknown, password: string) {
+    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     check(!identity.profileId, 'You are already signed in.');
     check(await this.canRegister(identity), 'Complete your first game to create a profile.');
     const cleaned = cleanName(name);
@@ -322,6 +257,7 @@ export class CatanStore {
     });
   }
   async login(identity: Identity, name: unknown, password: string) {
+    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     const cleaned = cleanName(name);
     await this.rateLimit(`login:${cleaned.toLowerCase()}`, 10, 15 * 60_000);
     const profile = await this.get<ProfileRow>(
@@ -357,7 +293,7 @@ export class CatanStore {
       room.code,
       JSON.stringify(room),
     );
-    if (room.game)
+    if (room.game && room.status !== 'ended' && room.winProbability !== false)
       await this.query(
         'INSERT INTO jobs(room,revision,snapshot) VALUES(?,?,?) ON CONFLICT(room,revision) DO NOTHING',
         room.code,
@@ -370,15 +306,21 @@ export class CatanStore {
     name: unknown,
     capacity: number,
     guestName: unknown,
+    winProbability = true,
   ): Promise<Room> {
-    check(capacity === 4 || capacity === 6, 'Choose the 3–4 or 5–6 player board.');
+    check(
+      capacity === 3 || capacity === 4 || capacity === 5 || capacity === 6,
+      'Choose 3–6 players.',
+    );
+    check(typeof winProbability === 'boolean', 'Invalid probability setting.');
     const title = cleanName(name);
     const playerName = identity.name ?? cleanName(guestName);
     await this.rateLimit(`create:${identity.guestId}`, 10, 3600_000);
     return this.transaction(async () => {
       check(
         (await this.rooms()).filter(
-          (r) => r.status !== 'finished' && r.seats.some((s) => owns(identity, s)),
+          (r) =>
+            !['finished', 'ended'].includes(r.status) && r.seats.some((s) => owns(identity, s)),
         ).length < 10,
         'You already have ten open rooms.',
       );
@@ -399,6 +341,8 @@ export class CatanStore {
         code,
         name: title,
         capacity,
+        hosting: this.hosting,
+        winProbability,
         host: seat.id,
         seats: [seat],
         status: 'lobby',
@@ -436,7 +380,7 @@ export class CatanStore {
     identity: Identity,
     code: string,
     revision: number,
-    command: 'start' | 'pause' | 'resume' | 'leave' | 'action',
+    command: 'start' | 'pause' | 'resume' | 'leave' | 'action' | 'end-game',
     action?: Action,
   ): Promise<Room | undefined> {
     return this.transaction(async () => {
@@ -455,8 +399,8 @@ export class CatanStore {
           403,
         );
         check(
-          room.seats.length >= (room.capacity === 6 ? 5 : 3),
-          room.capacity === 6
+          room.seats.length >= (room.capacity >= 5 ? 5 : 3),
+          room.capacity >= 5
             ? 'The extended board needs 5–6 players.'
             : 'The base board needs 3–4 players.',
         );
@@ -468,12 +412,29 @@ export class CatanStore {
         room.startedAt = Date.now();
         room.status = 'playing';
       } else if (command === 'pause' || command === 'resume') {
-        check(identity.profileId, 'Sign in to a profile to pause or resume games.', 403);
+        check(
+          identity.profileId || (room.hosting === 'local' && seat.id === room.host),
+          'Sign in to a profile to pause or resume games.',
+          403,
+        );
         check(
           room.status === (command === 'pause' ? 'playing' : 'paused'),
           'This game cannot be paused or resumed now.',
         );
         room.status = command === 'pause' ? 'paused' : 'playing';
+      } else if (command === 'end-game') {
+        check(seat.id === room.host, 'Only the host can end the game.', 403);
+        check(
+          room.game && ['playing', 'paused'].includes(room.status),
+          'This game is already closed.',
+        );
+        room.status = 'ended';
+        room.finishedAt = Date.now();
+        room.game.offer = undefined;
+        room.game.log.push({
+          turn: room.game.turn,
+          text: `${seat.name} ended the game early. No results were recorded.`,
+        });
       } else if (command === 'leave') {
         check(room.status === 'lobby', 'You can only leave before the game starts.');
         room.seats = room.seats.filter((s) => s.id !== seat.id);
@@ -503,6 +464,7 @@ export class CatanStore {
     });
   }
   private async recordResults(room: Room) {
+    if (this.hosting === 'local' || room.hosting === 'local') return;
     const game = room.game!;
     for (const [i, p] of game.players.entries()) {
       const seat = room.seats.find((s) => s.id === p.id)!;
@@ -638,6 +600,7 @@ export class CatanStore {
     return { rows, anonymous: anonymous!, totals: totals! };
   }
   async profile(identity: Identity) {
+    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     check(identity.profileId, 'Sign in to see personal statistics.', 401);
     const results = await this.all<ResultRow>(
       'SELECT * FROM results WHERE profile=? ORDER BY finished DESC',

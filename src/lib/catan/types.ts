@@ -2,6 +2,13 @@ export const RESOURCES = ['wood', 'brick', 'sheep', 'wheat', 'ore'] as const;
 export type Resource = (typeof RESOURCES)[number];
 export type Cards = Record<Resource, number>;
 export type Development = 'knight' | 'victory' | 'roads' | 'plenty' | 'monopoly';
+export const DEVELOPMENT_NAMES: Record<Development, string> = {
+  knight: 'Knight',
+  victory: 'Victory point',
+  roads: 'Road building',
+  plenty: 'Year of plenty',
+  monopoly: 'Monopoly',
+};
 export type Random = () => number;
 export type Phase =
   'setup-settlement' | 'setup-road' | 'roll' | 'discard' | 'robber' | 'trade' | 'finished';
@@ -53,13 +60,14 @@ export interface Player {
   profileId?: string;
   resources: Cards;
   development: { kind: Development; boughtTurn: number }[];
+  playedDevelopment?: { kind: Exclude<Development, 'victory'>; turn: number }[];
   knights: number;
   metrics: PlayerMetrics;
 }
 export interface Offer {
   id: number;
   from: number;
-  to: number;
+  to: number | 'all';
   give: Cards;
   receive: Cards;
 }
@@ -94,7 +102,7 @@ export type Action =
   | { type: 'discard'; cards: Cards }
   | { type: 'robber'; hex: number; victim?: number }
   | { type: 'bank-trade'; give: Resource; receive: Resource }
-  | { type: 'offer'; to: number; give: Cards; receive: Cards }
+  | { type: 'offer'; to: number | 'all'; give: Cards; receive: Cards }
   | { type: 'accept-trade'; offer: number }
   | { type: 'development'; card: 'knight' }
   | { type: 'development'; card: 'monopoly'; resource: Resource }

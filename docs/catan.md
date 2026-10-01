@@ -1,7 +1,6 @@
 # Catan game night
 
-Open `/catan` from the website navigation. Create a table for **3–4 players** or
-**5–6 players**, share the six-character room code, and have each player use their
+Open `/catan` from the website navigation. Enter a table name and your name, choose **3–6 seats** in Settings, and share the six-character room code, and have each player use their
 own browser/device. The host starts once the minimum number of seats is filled.
 
 ## Hosting on Vercel
@@ -24,28 +23,62 @@ there is no public endpoint accepting arbitrary simulation state. A queue failur
 never rolls back a player's accepted move. Pending jobs survive redeployment and
 are redispatched when the table is opened or polled (after a ten-minute retry window).
 
-## Local development and Wi-Fi
+## Settings and offline hosting
 
-Use Node 22, install dependencies, and set `CATAN_DATABASE_URL` in `.env.local` to
-a development Postgres database. Then run `npm run dev:lan`, or build and start:
+Online hosting is the default. The landing page uses the main site's font, colors,
+and minimal layout: Start a table, Join a table, and an embedded leaderboard.
+Settings contains an optional win-probability switch, a 3–6 seat slider, and Self-host.
+Disabling probabilities prevents simulation jobs from being created, as well as
+hiding their panel. Five and six seats use the extended board.
+
+Self-hosting requires a laptop/desktop local server; a browser tab cannot become a
+LAN web server. Players can join from phones on the same Wi-Fi or hotspot, without
+internet. Prepare the offline host **once while online** (Node 22.13+ required):
 
 ```sh
-npm run build
-npm run start -- --hostname 0.0.0.0
+npm ci
+npm run catan:prepare-local
 ```
 
-Open `http://localhost:3000/catan` locally or `http://HOST_LAN_IP:3000/catan` on
-another device. Everyone must use the same server address. The local server evaluates
-persisted jobs directly; Vercel deployments send them to the queue instead.
+Then, even without internet:
+
+```sh
+npm run catan:local
+```
+
+Open `http://localhost:3212/catan?hosting=local` on the host. The terminal and game
+show its Wi-Fi address; other devices open that address, then use a code or **Find
+local tables**. Discovery lists tables on that host, rather than scanning the LAN.
+Allow the host through its firewall and avoid guest networks that isolate devices.
+Keep the server running during play. Closing a browser tab does not stop the host.
+
+The prepared `.data/catan-host` folder is portable to a computer with compatible
+Node 22 installed; run `node start-local.mjs` inside the copied folder. It includes
+the built UI, fonts, assets and server dependencies. It does not require Postgres,
+Docker, cloud credentials, or npm installation during offline play. Preparing again
+replaces only the bundle and preserves `.data/catan-local.sqlite`. Environment files
+are excluded from the portable bundle, and the launcher removes cloud credentials.
+
+Local games are guest-only and never create leaderboard/results rows or profile
+registration eligibility. They are saved in `.data/catan-local.sqlite`; set
+`CATAN_LOCAL_DATABASE_PATH` to override the path. The local host can pause/resume.
+Local and online sessions use separate cookies, so switching modes keeps both seats.
+A local result is never uploaded or merged into online stats.
+
+For development, set `CATAN_DATABASE_URL` to a development Postgres database in
+`.env.local`, then run `npm run dev:lan`. Online mode stays the default, and Self-host
+switches to separate local storage. On Vercel, choosing Self-host shows the setup
+link; Vercel cannot serve games after the players lose internet access.
 
 ## Storage and identity
 
-- PostgreSQL stores rooms, sessions, profiles, results, probability history, and
+- For online games, PostgreSQL stores rooms, sessions, profiles, results, probability history, and
   evaluation jobs. `CATAN_DATABASE_URL` is server-only; never prefix it with `NEXT_PUBLIC_`.
 - Room actions, final results, revisions and evaluation snapshots commit atomically.
   A PostgreSQL advisory transaction lock serializes short writes across instances;
   revision checks reject stale moves. Simulations run outside the write transaction.
   This intentionally favors correctness for small game nights over high write throughput.
+  Local writes use SQLite transactions and a request mutex.
 - Game state persists after every accepted move, including an in-progress discard
   or robber phase. Restarting the server does not require restarting the game.
 - Session cookies are HTTP-only, SameSite=Lax, and Secure when served over HTTPS.
@@ -57,8 +90,7 @@ persisted jobs directly; Vercel deployments send them to the queue instead.
   games, guests retain their seats through the same browser cookie. Guests should
   keep that cookie until they have created a profile or finished playing.
 - There is no password recovery flow or email collection. Keep your password.
-- Configure backups/retention with the Postgres provider. The former local SQLite
-  files are not imported automatically and are left untouched by this migration.
+- Configure backups/retention with the Postgres provider. Legacy local SQLite files are not imported into online stats.
 
 ## Rules and controls
 
@@ -80,11 +112,26 @@ turn. Victory is checked only for the player currently taking their turn.
 
 References: [official rules](https://www.catan.com/understand-catan/game-rules) and
 [paired-player rules](https://www.catan.com/sites/default/files/2021-09/CATAN_New5-6Player_ruleEN.pdf).
-All board artwork is generated by original CSS/SVG code.
+The island uses original SVG terrain illustrations and harbor ships; development cards
+have illustrated faces and a clickable draw pile. These assets are bundled locally.
+The turn banner names the active player. Board tiles animate into place at the start,
+and dice animate once per roll; reduced-motion settings disable these animations.
+
+Trade offers can target one player or **Whole table** (the default). Any other player
+who can pay can accept a table offer; the first accepted transaction closes it for
+everyone. Revision checks prevent two players from claiming the same offer.
+Played development cards are listed publicly under each player, with their turn.
+Unplayed cards and victory-point cards stay private. Older saves retain their knight
+count; they cannot reconstruct card history from before this feature.
+
+The host can choose **End game**, then confirm **End game for everyone**, to close
+an active or paused table early. The saved board remains viewable, but moves stop.
+This declares no winner and does not create results or change stats. Normal games
+still end automatically when a player legally reaches 10 points on their turn.
 
 ## Statistics and anonymity
 
-Completed results automatically enter the server's durable statistics database.
+Completed online results automatically enter the server's durable statistics database.
 The public leaderboard shows profile name, games, wins, win rate, and average
 points. Ranking uses win rate, then number of games, then average points. It also
 shows aggregate anonymous appearances and wins, without guest display names.
@@ -139,5 +186,6 @@ npm run build
 
 Service and browser tests clear the `catan` tables in `CATAN_TEST_DATABASE_URL`.
 The guard requires the database name `catan_test`; never point it at real user data.
-Run those suites sequentially. Browser tests use port 3210. Screenshots/traces are in `test-results/catan`.
+Run those suites sequentially. Browser tests use port 3210 and a separate
+`.data/catan-browser-local.sqlite` for self-host checks. Local unit tests use temporary directories. Screenshots/traces are in `test-results/catan`.
 The preexisting site browser tests remain available through `npm run test:e2e`.
