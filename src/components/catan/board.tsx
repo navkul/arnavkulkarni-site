@@ -1,8 +1,10 @@
 'use client';
 import { useId, useState } from 'react';
+import { ResourceIcon, PieceArt } from './cards';
 import { TerrainArt, PortArt } from './art';
 import type { Board as BoardState } from '@/lib/catan/types';
-export const PLAYER_COLORS = ['#c65335', '#287eb2', '#d29621', '#7763b6', '#448369', '#c36192'];
+import { PLAYER_COLORS } from '@/lib/catan/types';
+export { PLAYER_COLORS } from '@/lib/catan/types';
 export const RESOURCE_COLORS = {
   wood: '#487b58',
   brick: '#b36b4e',
@@ -21,6 +23,9 @@ export default function Board({
   onHex,
   selectedEdges = [],
   reveal = false,
+  colors = [0, 1, 2, 3, 4, 5],
+  revealAt,
+  now = 0,
 }: {
   board: BoardState;
   vertices: number[];
@@ -31,11 +36,14 @@ export default function Board({
   onHex: (id: number) => void;
   selectedEdges?: number[];
   reveal?: boolean;
+  colors?: number[];
+  revealAt?: number;
+  now?: number;
 }) {
   const artworkId = useId();
   const [zoom, setZoom] = useState(false);
-  const extentX = Math.max(...board.vertices.map((v) => Math.abs(v.x))) * 60 + 82;
-  const extentY = Math.max(...board.vertices.map((v) => Math.abs(v.y))) * 60 + 82;
+  const extentX = Math.max(...board.vertices.map((v) => Math.abs(v.x))) * 60 + 125;
+  const extentY = Math.max(...board.vertices.map((v) => Math.abs(v.y))) * 60 + 125;
   const key = (event: React.KeyboardEvent, fn: () => void) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -43,17 +51,16 @@ export default function Board({
     }
   };
   return (
-    <div className={`ct-board-shell ${reveal ? 'ct-board-reveal' : ''}`}>
+    <div
+      className={`ct-board-shell ${revealAt ? 'ct-board-opening' : reveal ? 'ct-board-reveal' : ''}`}
+    >
       <div className="ct-board-toolbar">
         <span>
-          {reveal ? (
-            <>
-              <span className="ct-shuffle-label">Shuffling the island…</span>
-              <span className="ct-ready-label">Your island is ready</span>
-            </>
-          ) : (
-            'Tap a highlighted spot to play'
-          )}
+          {revealAt && now < revealAt
+            ? 'Preparing your island…'
+            : revealAt && now < revealAt + 5500
+              ? 'Building your island…'
+              : 'Tap a highlighted spot to play'}
         </span>
         <button onClick={() => setZoom(!zoom)} aria-pressed={zoom}>
           {zoom ? 'Fit island' : 'Zoom in'}
@@ -92,7 +99,14 @@ export default function Board({
               tabIndex={robber && h.id !== board.robber ? 0 : undefined}
               aria-label={`Hex ${h.id + 1}: ${h.resource}, ${h.number || 'no production'}${h.id === board.robber ? ', robber' : ''}`}
               className={`ct-tile ${robber && h.id !== board.robber ? 'ct-hex-target' : ''}`}
-              style={{ animationDelay: `${((h.id * 7) % board.hexes.length) * 24}ms` }}
+              style={
+                {
+                  '--tile-delay': `${(revealAt ?? now) - now + h.id * 45}ms`,
+                  '--face-delay': `${(revealAt ?? now) - now + 1700 + h.id * 35}ms`,
+                  '--number-delay': `${(revealAt ?? now) - now + 3500 + (board.tokenOrder?.indexOf(h.id) ?? h.id) * 40}ms`,
+                  animationDelay: `${((h.id * 7) % board.hexes.length) * 24}ms`,
+                } as React.CSSProperties
+              }
               onClick={() => robber && h.id !== board.robber && onHex(h.id)}
               onKeyDown={(e) => key(e, () => robber && h.id !== board.robber && onHex(h.id))}
             >
@@ -105,7 +119,7 @@ export default function Board({
                 strokeWidth="3"
                 filter="url(#tile-shadow)"
               />
-              <g clipPath={`url(#${artworkId}-clip-${h.id})`}>
+              <g className="ct-terrain-face" clipPath={`url(#${artworkId}-clip-${h.id})`}>
                 <use
                   href={`#${artworkId}-${h.resource}`}
                   x={h.x * 60 - 61}
@@ -123,11 +137,19 @@ export default function Board({
                 strokeWidth="2.5"
               />
               {h.number > 0 && (
-                <>
-                  <circle cx={h.x * 60} cy={h.y * 60 + 2} r="18" fill="#fff6de" />
+                <g className="ct-number-token">
+                  <circle cx={h.x * 60} cy={h.y * 60 + 4} r="21" fill="#263e37" opacity=".18" />
+                  <circle
+                    cx={h.x * 60}
+                    cy={h.y * 60}
+                    r="21"
+                    fill="#fff6de"
+                    stroke="#cfb983"
+                    strokeWidth="1"
+                  />
                   <text
                     x={h.x * 60}
-                    y={h.y * 60 + 8}
+                    y={h.y * 60 + 3}
                     textAnchor="middle"
                     fill={[6, 8].includes(h.number) ? '#a93625' : '#353d36'}
                     fontSize="19"
@@ -137,14 +159,14 @@ export default function Board({
                   </text>
                   <text
                     x={h.x * 60}
-                    y={h.y * 60 + 32}
+                    y={h.y * 60 + 15}
                     textAnchor="middle"
-                    fill="#fff6de"
-                    fontSize="13"
+                    fill={[6, 8].includes(h.number) ? '#a93625' : '#806d44'}
+                    fontSize="8"
                   >
                     {'•'.repeat(6 - Math.abs(7 - h.number))}
                   </text>
-                </>
+                </g>
               )}
               {board.robber === h.id && (
                 <g aria-label="Robber">
@@ -160,11 +182,12 @@ export default function Board({
             </g>
           ))}
           {board.edges
-            .filter(
-              (e) =>
-                e.hexes.length === 1 &&
-                board.vertices[e.a].port &&
-                board.vertices[e.a].port === board.vertices[e.b].port,
+            .filter((e) =>
+              board.ports
+                ? board.ports.some((p) => p.edge === e.id)
+                : e.hexes.length === 1 &&
+                  board.vertices[e.a].port !== undefined &&
+                  board.vertices[e.a].port === board.vertices[e.b].port,
             )
             .map((e) => {
               const a = board.vertices[e.a],
@@ -172,8 +195,8 @@ export default function Board({
                 x = (a.x + b.x) * 30,
                 y = (a.y + b.y) * 30;
               const norm = Math.hypot(x, y),
-                px = x + (x / norm) * 35,
-                py = y + (y / norm) * 35;
+                px = x + (x / norm) * 65,
+                py = y + (y / norm) * 65;
               return (
                 <g
                   key={`port-${e.id}`}
@@ -188,9 +211,12 @@ export default function Board({
                   <g transform={`translate(${px} ${py - 7})`}>
                     <PortArt />
                   </g>
-                  <rect x={px - 29} y={py + 17} width="58" height="17" rx="5" fill="#f4edd4" />
-                  <text x={px} y={py + 29} textAnchor="middle" fontSize="10" fill="#234d51">
-                    {a.port === 'any' ? '3:1 any' : `2:1 ${a.port}`}
+                  <rect x={px - 29} y={py + 17} width="58" height="23" rx="5" fill="#f4edd4" />
+                  <g transform={`translate(${px + 13} ${py + 28}) scale(.42)`}>
+                    <ResourceIcon kind={a.port!} />
+                  </g>
+                  <text x={px - 10} y={py + 32} textAnchor="middle" fontSize="10" fill="#234d51">
+                    {a.port === 'any' ? '3:1' : '2:1'}
                   </text>
                 </g>
               );
@@ -216,7 +242,7 @@ export default function Board({
                     y1={a.y * 60}
                     x2={b.x * 60}
                     y2={b.y * 60}
-                    stroke={selected ? '#fef5dc' : PLAYER_COLORS[e.player!]}
+                    stroke={selected ? '#fef5dc' : PLAYER_COLORS[colors[e.player!]]}
                     strokeWidth="9"
                     strokeLinecap="round"
                   />
@@ -265,16 +291,16 @@ export default function Board({
                   <circle cx={x} cy={y} r="12" fill="#fff9e5" stroke="#264a43" strokeWidth="2" />
                 )}
                 {building && (
-                  <path
-                    d={
-                      building.kind === 'city'
-                        ? `M${x - 11},${y + 8} v-12 l6,-6 6,6 v3 h8 v9 Z`
-                        : `M${x - 8},${y + 7} v-10 l8,-7 8,7 v10 Z`
-                    }
-                    fill={PLAYER_COLORS[building.player]}
-                    stroke="#fff4d9"
-                    strokeWidth="2"
-                  />
+                  <svg
+                    x={x - 14}
+                    y={y - 17}
+                    width="28"
+                    height="27"
+                    viewBox="0 0 70 64"
+                    overflow="visible"
+                  >
+                    <PieceArt kind={building.kind} color={PLAYER_COLORS[colors[building.player]]} />
+                  </svg>
                 )}
                 {legal && !building && (
                   <text x={x} y={y + 5} textAnchor="middle" fontSize="15" fill="#264a43">

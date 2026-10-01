@@ -198,8 +198,35 @@ export async function POST(request: NextRequest) {
         { room: roomView(await store.join(identity, code, body.name), identity) },
         session.secret,
       );
+    if (body.command === 'color')
+      return response(
+        request,
+        {
+          room: roomView(
+            await store.chooseColor(
+              identity,
+              code,
+              body.revision as number,
+              body.color,
+              body.locked,
+            ),
+            identity,
+          ),
+        },
+        session.secret,
+      );
     if (
-      !['start', 'pause', 'resume', 'leave', 'action', 'end-game'].includes(body.command as string)
+      ![
+        'roll-order',
+        'approve-pause',
+        'decline-pause',
+        'start',
+        'pause',
+        'resume',
+        'leave',
+        'action',
+        'end-game',
+      ].includes(body.command as string)
     )
       throw new ServiceError('Unknown command.');
     const action = body.command === 'action' ? parseAction(body.action) : undefined;
@@ -207,8 +234,9 @@ export async function POST(request: NextRequest) {
       identity,
       code,
       body.revision as number,
-      body.command as 'start' | 'pause' | 'resume' | 'leave' | 'action' | 'end-game',
+      body.command as import('@/lib/catan/store').RoomCommand,
       action,
+      body.pauseRequestId,
     );
     if (room?.game) after(() => queueEvaluation(room));
     return response(request, { room: room ? roomView(room, identity) : null }, session.secret);

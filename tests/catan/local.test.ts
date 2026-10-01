@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CatanStore } from '../../src/lib/catan/store.ts';
+import { finishOpening, agreePause } from './helpers.ts';
 import { emptyCards } from '../../src/lib/catan/types.ts';
 
 for (const capacity of [3, 5])
@@ -26,7 +27,10 @@ for (const capacity of [3, 5])
       assert.equal(room.hosting, 'local');
       assert.equal(room.winProbability, false);
       assert.equal((await store.pendingJobs(room.code)).length, 0);
+      room = await finishOpening(store, room);
       room = (await store.change(host, room.code, room.revision, 'pause'))!;
+      assert.equal(room.status, 'playing');
+      room = await agreePause(store, room);
       await store.close();
       store = new CatanStore(file, 'local');
       assert.equal((await store.room(room.code)).status, 'paused');

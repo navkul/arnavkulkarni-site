@@ -47,7 +47,7 @@ function note(game: Game, text: string) {
   if (game.log.length > 100) game.log.shift();
 }
 export function createGame(
-  seats: { id: string; name: string; profileId?: string }[],
+  seats: { id: string; name: string; profileId?: string; color?: number }[],
   random: Random,
 ): Game {
   requireRule(seats.length >= 3 && seats.length <= 6, 'Games need 3–6 players.');

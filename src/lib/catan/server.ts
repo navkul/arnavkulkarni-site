@@ -60,7 +60,8 @@ export async function processEvaluation(
 }
 /** Publish persisted outbox entries. Polling repairs failed publication and expired delivery. */
 export async function queueEvaluation(room?: Room): Promise<void> {
-  if (room?.winProbability === false || room?.status === 'ended') return;
+  if (room?.winProbability === false || room?.status === 'ended' || room?.status === 'starting')
+    return;
   const store = getStore(room?.hosting ?? 'server');
   const jobs = await store.pendingJobs(room?.code);
   await Promise.all(

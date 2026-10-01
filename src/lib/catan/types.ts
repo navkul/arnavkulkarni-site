@@ -1,3 +1,19 @@
+export const PLAYER_COLORS = [
+  '#bd5038',
+  '#287eb2',
+  '#d49a2a',
+  '#7962a4',
+  '#448369',
+  '#bf7290',
+] as const;
+export const PLAYER_COLOR_NAMES = [
+  'Terracotta',
+  'Ocean',
+  'Ochre',
+  'Violet',
+  'Forest',
+  'Rose',
+] as const;
 export const RESOURCES = ['wood', 'brick', 'sheep', 'wheat', 'ore'] as const;
 export type Resource = (typeof RESOURCES)[number];
 export type Cards = Record<Resource, number>;
@@ -41,6 +57,8 @@ export interface Board {
   vertices: Vertex[];
   edges: Edge[];
   robber: number;
+  tokenOrder?: number[];
+  ports?: { edge: number; resource: Resource | 'any' }[];
 }
 export interface PlayerMetrics {
   produced: Cards;
@@ -55,6 +73,7 @@ export interface PlayerMetrics {
   developmentBought: number;
 }
 export interface Player {
+  color?: number;
   id: string;
   name: string;
   profileId?: string;

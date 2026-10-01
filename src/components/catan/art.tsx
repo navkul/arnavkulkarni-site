@@ -1,9 +1,36 @@
+import { useId } from 'react';
 import type { Development, Resource } from '@/lib/catan/types';
 
 /** Original SVG illustrations; bundled with the app for offline play. */
 export function TerrainArt({ kind }: { kind: Resource | 'desert' }) {
+  const ink = useId();
+  const sky = {
+    wood: '#94ac78',
+    brick: '#dfac82',
+    sheep: '#c8d6a0',
+    wheat: '#f1d88b',
+    ore: '#bed1cd',
+    desert: '#f3deb0',
+  }[kind];
   return (
     <g aria-hidden="true">
+      <defs>
+        <linearGradient id={`${ink}-sky`} x1="0" y1="0" x2="0" y2="1">
+          <stop stopColor={sky} />
+          <stop offset="1" stopColor="#fff6d9" />
+        </linearGradient>
+        <pattern
+          id={`${ink}-paper`}
+          width="11"
+          height="13"
+          patternUnits="userSpaceOnUse"
+          patternTransform="rotate(-12)"
+        >
+          <path d="M1 2h2M7 9h1M4 12h2" stroke="#fff9da" strokeWidth=".7" opacity=".45" />
+          <path d="M3 6h1M9 3h1" stroke="#354f42" strokeWidth=".5" opacity=".3" />
+        </pattern>
+      </defs>
+      <rect x="-70" y="-70" width="140" height="140" fill={`url(#${ink}-sky)`} />
       {kind === 'wood' && (
         <>
           <path d="M-70 22Q-30-15 8 9T70-4V70H-70Z" fill="#365f4a" />
@@ -151,7 +178,8 @@ export function TerrainArt({ kind }: { kind: Resource | 'desert' }) {
             strokeWidth="2"
           />
         </>
-      )}
+      )}{' '}
+      <rect x="-70" y="-70" width="140" height="140" fill={`url(#${ink}-paper)`} />
     </g>
   );
 }

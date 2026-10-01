@@ -1,9 +1,10 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import GameTable from './game-table';
 import SettingHelp from './setting-help';
-import { PLAYER_COLORS } from './board';
+import { PLAYER_COLORS, PLAYER_COLOR_NAMES } from '@/lib/catan/types';
 import type { Action } from '@/lib/catan/types';
 import type { RoomSummary, RoomView } from '@/lib/catan/view';
 import type { CatanStore, Odds } from '@/lib/catan/store';
@@ -151,12 +152,70 @@ export default function CatanApp({
         code: room.code,
         revision: room.revision,
         action,
+        ...(['approve-pause', 'decline-pause'].includes(command)
+          ? { pauseRequestId: room.pauseRequest?.id }
+          : {}),
       });
       if (command === 'leave' || !result.room) openRoom('');
       else setRoom(result.room);
     });
   }
   const user = bootstrap?.user;
+  const enterProfile = () =>
+    void run(async () => {
+      if (!auth) return;
+      await api('', { command: auth, name: profileName, password });
+      setPassword('');
+      setAuth(undefined);
+      setRoom(undefined);
+    });
+  const nameAccount = guestName.trim() && !user?.registered && hosting === 'server' && (
+    <details className="ct-name-account">
+      <summary>Use a profile</summary>
+      <div
+        className="ct-name-dropdown"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && auth) {
+            e.preventDefault();
+            if (profileName && password) enterProfile();
+          }
+        }}
+      >
+        <div className="ct-action-row">
+          <button type="button" className="ct-text-button" onClick={() => setAuth('login')}>
+            Sign in
+          </button>
+          {user?.canRegister && (
+            <button type="button" className="ct-text-button" onClick={() => setAuth('register')}>
+              Create profile
+            </button>
+          )}
+        </div>
+        {auth && (
+          <>
+            <input
+              aria-label="Profile name"
+              autoComplete="username"
+              placeholder="Profile name"
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+            />
+            <input
+              aria-label="Password"
+              type="password"
+              autoComplete={auth === 'register' ? 'new-password' : 'current-password'}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button type="button" disabled={busy} className="ct-primary" onClick={enterProfile}>
+              {auth === 'register' ? 'Create profile' : 'Sign in to profile'}
+            </button>
+          </>
+        )}
+      </div>
+    </details>
+  );
   return (
     <main className={`ct-app${code ? ' ct-in-game' : ''}`}>
       <header className="ct-header">
@@ -176,11 +235,7 @@ export default function CatanApp({
             >
               {user.name}
             </button>
-          ) : (
-            <button className="ct-text-button" onClick={() => setAuth('login')}>
-              Sign in
-            </button>
-          )}
+          ) : null}
         </div>
       </header>
       {error && (
@@ -196,7 +251,7 @@ export default function CatanApp({
           Connection lost. Reconnecting…
         </p>
       )}
-      {auth && (
+      {auth && (tab === 'profile' || !!room?.game) && (
         <section className="ct-panel ct-auth">
           <div className="ct-section-heading">
             <h2>{auth === 'register' ? 'Create profile' : 'Sign in'}</h2>
@@ -252,7 +307,17 @@ export default function CatanApp({
       )}
       {tab === 'play' && !code && (
         <>
-          <h1 className="ct-page-title">Catan</h1>
+          <h1 className="ct-page-title ct-logo-heading">
+            <Image
+              src="/catan/catan-logo.svg"
+              alt=""
+              width={160}
+              height={64}
+              className="ct-official-logo"
+              priority
+            />
+            <span>CATAN</span>
+          </h1>
           <div className="ct-lobby-grid">
             <section className="ct-lobby-section">
               <h2>Start a table</h2>
@@ -274,29 +339,33 @@ export default function CatanApp({
                 }}
               >
                 <label>
-                  Table name
+                  <span className="ct-sr-only">Table name</span>
                   <input
                     value={roomName}
                     onChange={(e) => setRoomName(e.target.value)}
                     minLength={2}
                     maxLength={24}
-                    placeholder="Friday night"
+                    placeholder="Table name"
                     required
                   />
                 </label>
                 <label>
-                  Your name
+                  <span className="ct-sr-only">Your name</span>
                   <input
                     value={user?.registered ? (user.name ?? '') : guestName}
-                    onChange={(e) => setGuestName(e.target.value)}
+                    onChange={(e) => {
+                      setGuestName(e.target.value);
+                      setProfileName(e.target.value);
+                    }}
                     readOnly={user?.registered}
                     minLength={2}
                     maxLength={24}
                     autoComplete="nickname"
-                    placeholder="Name"
+                    placeholder="Your name"
                     required
                   />
                 </label>
+                {nameAccount}
                 <details className="ct-settings">
                   <summary>Settings</summary>
                   <div className="ct-setting-row">
@@ -423,18 +492,20 @@ export default function CatanApp({
                 }}
               >
                 <label>
-                  Table code
+                  <span className="ct-sr-only">Table code</span>
                   <input
                     value={joinCode}
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     minLength={6}
                     maxLength={6}
-                    placeholder="ABC234"
+                    placeholder="Table code"
                     autoCapitalize="characters"
                     required
                   />
                 </label>
-                <button disabled={busy || !bootstrap}>Join table</button>
+                <button className="ct-primary" disabled={busy || !bootstrap}>
+                  Join table
+                </button>
               </form>
               {hosting === 'local' && (
                 <div className="ct-local-tables">
@@ -537,7 +608,11 @@ export default function CatanApp({
               <div className="ct-seat-grid">
                 {Array.from({ length: room.capacity }, (_, i) => (
                   <div className={room.seats[i] ? 'ct-seat-filled' : 'ct-seat-empty'} key={i}>
-                    <span style={{ background: room.seats[i] ? PLAYER_COLORS[i] : '#dedfd3' }}>
+                    <span
+                      style={{
+                        background: room.seats[i] ? PLAYER_COLORS[room.seats[i].color] : '#dedfd3',
+                      }}
+                    >
                       {room.seats[i]?.name[0] ?? '+'}
                     </span>
                     <strong>{room.seats[i]?.name ?? 'Open seat'}</strong>
@@ -549,6 +624,49 @@ export default function CatanApp({
                   </div>
                 ))}
               </div>
+              {room.joined &&
+                room.status === 'lobby' &&
+                (() => {
+                  const mine = room.seats.find((s) => s.me)!;
+                  const choose = (color: number, locked: boolean) =>
+                    void run(async () => {
+                      const result = await api<{ room: RoomView }>('', {
+                        command: 'color',
+                        code,
+                        revision: room.revision,
+                        color,
+                        locked,
+                      });
+                      setRoom(result.room);
+                    });
+                  return (
+                    <div className="ct-color-picker" aria-label="Your player color">
+                      {PLAYER_COLORS.map((color, i) => (
+                        <button
+                          key={color}
+                          type="button"
+                          aria-label={`${PLAYER_COLOR_NAMES[i]} color`}
+                          title={PLAYER_COLOR_NAMES[i]}
+                          aria-pressed={mine.color === i}
+                          style={{ background: color }}
+                          disabled={
+                            busy ||
+                            mine.colorLocked ||
+                            room.seats.some((s) => !s.me && s.color === i)
+                          }
+                          onClick={() => choose(i, false)}
+                        />
+                      ))}
+                      <button
+                        className="ct-color-lock"
+                        disabled={busy}
+                        onClick={() => choose(mine.color, !mine.colorLocked)}
+                      >
+                        {mine.colorLocked ? 'Unlock color' : 'Lock color'}
+                      </button>
+                    </div>
+                  );
+                })()}
               {!room.joined && (
                 <form
                   className="ct-inline-form"
@@ -566,16 +684,21 @@ export default function CatanApp({
                 >
                   {!user?.registered && (
                     <label>
-                      Your name at the table
+                      <span className="ct-sr-only">Your name at the table</span>
                       <input
+                        placeholder="Your name"
                         minLength={2}
                         maxLength={24}
                         required
                         value={guestName}
-                        onChange={(e) => setGuestName(e.target.value)}
+                        onChange={(e) => {
+                          setGuestName(e.target.value);
+                          setProfileName(e.target.value);
+                        }}
                       />
                     </label>
                   )}
+                  {nameAccount}
                   <button
                     className="ct-primary"
                     disabled={busy || room.seats.length >= room.capacity}
@@ -606,7 +729,8 @@ export default function CatanApp({
                 {room.capacity >= 5
                   ? '5–6 player island with paired turns. After the primary player, the player three seats ahead can build and trade with the bank.'
                   : '3–4 player classic island.'}{' '}
-                Starting order is randomized. Everyone places two settlements and two roads.
+                Roll for first player, then play clockwise. Everyone places two settlements and two
+                roads.
               </p>
             </section>
           )}

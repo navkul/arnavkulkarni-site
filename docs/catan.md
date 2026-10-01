@@ -61,7 +61,8 @@ are excluded from the portable bundle, and the launcher removes cloud credential
 
 Local games are guest-only and never create leaderboard/results rows or profile
 registration eligibility. They are saved in `.data/catan-local.sqlite`; set
-`CATAN_LOCAL_DATABASE_PATH` to override the path. The local host can pause/resume.
+`CATAN_LOCAL_DATABASE_PATH` to override the path. Any seated player can request a pause;
+every other player must agree. Any seated player can resume a paused table.
 Local and online sessions use separate cookies, so switching modes keeps both seats.
 A local result is never uploaded or merged into online stats.
 
@@ -86,8 +87,10 @@ link; Vercel cannot serve games after the players lose internet access.
 - A guest can create a name/password profile after completing their first game.
   Their unclaimed completed results attach only to that profile. Signing in later
   recovers the profile's seats, including on a different device.
-- Profile players can pause/resume games from the table. In mixed guest/profile
-  games, guests retain their seats through the same browser cookie. Guests should
+- Any seated player can request **Pause & save** from the top controls. The game
+  continues until all other players agree; any player can decline the request.
+  Accepted moves are already saved, whether or not the table is paused.
+  In mixed guest/profile games, guests retain their seats through the same browser cookie. Guests should
   keep that cookie until they have created a profile or finished playing.
 - There is no password recovery flow or email collection. Keep your password.
 - Configure backups/retention with the Postgres provider. Legacy local SQLite files are not imported into online stats.
@@ -95,9 +98,14 @@ link; Vercel cannot serve games after the players lose internet access.
 ## Rules and controls
 
 The island, ports, pieces and development deck follow the base game and extended
-supplies. Terrain and numbers are randomized; adjacent red numbers are excluded.
-Turn order is randomized, and the initial placements follow forward/reverse order.
-The second settlement supplies starting resources.
+supplies. Terrain is shuffled; the official alphabetical number-disc sequence is laid
+counterclockwise from a randomly chosen corner, spiraling inward and skipping deserts.
+Players choose unique colors in the lobby and can lock their choices. Starting locks
+the assigned colors for the game. A three-second countdown precedes tile placement,
+terrain flips and number discs. Each player then rolls for first player; tied highest
+rollers reroll. The highest starts and the others follow clockwise seating order.
+The initial placements follow forward/reverse order; the second settlement supplies
+starting resources. Colors stay with the player when the turn order rotates.
 
 Use highlighted spots on the SVG island or the location dropdown. Cities upgrade
 settlements. Road Building uses a two-road preview and an explicit confirm button.
@@ -114,18 +122,25 @@ References: [official rules](https://www.catan.com/understand-catan/game-rules) 
 [paired-player rules](https://www.catan.com/sites/default/files/2021-09/CATAN_New5-6Player_ruleEN.pdf).
 The island uses original SVG terrain illustrations and harbor ships; development cards
 have illustrated faces and a clickable draw pile. These assets are bundled locally.
-The turn banner names the active player. Board tiles animate into place at the start,
-and dice animate once per roll; reduced-motion settings disable these animations.
+The turn banner names the active player and puts Roll dice / End turn above the board.
+Dice use six CSS 3D faces in the roller’s color. The server stores each result and its
+presentation timestamp; all clients follow that timeline, including a reconnect partway
+through the animation. Reduced-motion settings show the final state without movement.
+Resource/development hands use card faces; opponents see backs and counts. Purchases
+show card costs and remaining piece/deck inventory, and the bank shows each resource
+supply, including zero. Unaffordable purchases explain the missing resources.
+Longest road and largest army cards wait beside the supplies until awarded, then
+animate to a small badge beside the winner’s played cards on every connected screen.
 
 Trade offers can target one player or **Whole table** (the default). Any other player
 who can pay can accept a table offer; the first accepted transaction closes it for
 everyone. Revision checks prevent two players from claiming the same offer.
-Played development cards are listed publicly under each player, with their turn.
+Played development cards appear as small public card images under each player.
 Unplayed cards and victory-point cards stay private. Older saves retain their knight
 count; they cannot reconstruct card history from before this feature.
 
 The host can choose **End game**, then confirm **End game for everyone**, to close
-an active or paused table early. The saved board remains viewable, but moves stop.
+a starting, active or paused table early. The saved board remains viewable, but moves stop.
 This declares no winner and does not create results or change stats. Normal games
 still end automatically when a player legally reaches 10 points on their turn.
 

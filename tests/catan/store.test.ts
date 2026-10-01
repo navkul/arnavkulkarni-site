@@ -6,7 +6,7 @@ import { emptyCards } from '../../src/lib/catan/types.ts';
 import { parseAction } from '../../src/lib/catan/input.ts';
 import { evaluate, policy, seededRandom } from '../../src/lib/catan/simulation.ts';
 import { applyAction, score } from '../../src/lib/catan/engine.ts';
-import { conserve, setup } from './helpers.ts';
+import { conserve, setup, finishOpening, agreePause } from './helpers.ts';
 
 const testUrl = process.env.CATAN_TEST_DATABASE_URL;
 if (!testUrl || !new URL(testUrl).pathname.endsWith('/catan_test'))
@@ -27,6 +27,7 @@ async function lobby(store: CatanStore, n = 3) {
   return { room, sessions };
 }
 async function completeFixture(store: CatanStore, room: Room, identity: Identity) {
+  if (room.status === 'starting') room = await finishOpening(store, room);
   // Put a real room one legal city purchase from victory; the service must record it.
   const g = room.game!;
   const player = g.players.findIndex(
@@ -69,14 +70,14 @@ test('lobby membership, capacity, host permission, revision checks and departure
     const left = (await s.change(sessions[0].identity, room.code, room.revision, 'leave'))!;
     assert.equal(left.host, left.seats[0].id);
     const started = (await s.change(sessions[1].identity, room.code, left.revision, 'start'))!;
-    assert.equal(started.status, 'playing');
+    assert.equal(started.status, 'starting');
     await assert.rejects(
       async () => await s.change(sessions[1].identity, room.code, started.revision, 'leave'),
       /before/,
     );
     await assert.rejects(
       async () => await s.change(sessions[1].identity, room.code, started.revision, 'pause'),
-      /profile/,
+      /cannot be requested/,
     );
   } finally {
     await s.close();
@@ -191,7 +192,9 @@ test('Postgres survives independent connections, profile login restores paused g
     room = await s.join(sessions[1].identity, room.code, 'Guest one');
     room = await s.join(sessions[2].identity, room.code, 'Guest two');
     room = (await s.change(host, room.code, room.revision, 'start'))!;
+    room = await finishOpening(s, room);
     room = (await s.change(host, room.code, room.revision, 'pause'))!;
+    room = await agreePause(s, room);
     const code = room.code,
       snapshot = JSON.stringify(room.game);
     await assert.rejects(
@@ -284,7 +287,8 @@ test('independent servers cannot overfill rooms or commit the same revision twic
     assert.equal(starts.filter((r) => r.status === 'fulfilled').length, 1);
     const started = await first.room(room.code);
     assert.equal(started.revision, filled.revision + 1);
-    assert.ok(await second.job(room.code, started.revision));
+    assert.equal(await second.job(room.code, started.revision), undefined);
+    assert.equal(started.status, 'starting');
     const rates = await Promise.allSettled([
       first.rateLimit('race', 1),
       second.rateLimit('race', 1),
@@ -300,7 +304,10 @@ test('durable snapshots survive reconnect, publish retries and out-of-order dupl
   let store = await freshStore();
   try {
     const { room, sessions } = await lobby(store);
-    const started = (await store.change(sessions[0].identity, room.code, room.revision, 'start'))!;
+    const started = await finishOpening(
+      store,
+      (await store.change(sessions[0].identity, room.code, room.revision, 'start'))!,
+    );
     const firstRevision = started.revision;
     const actor = sessions.find(
       (s) => roomView(started, s.identity).me === started.game!.active,
@@ -388,7 +395,7 @@ test('only the host can end early; closed games persist without results, new job
       store.change(host, room.code, room.revision, 'action', { type: 'roll' }),
       /not active/,
     );
-    await assert.rejects(store.change(host, room.code, room.revision, 'resume'), /profile|cannot/);
+    await assert.rejects(store.change(host, room.code, room.revision, 'resume'), /not paused/);
     await assert.rejects(
       store.change(host, room.code, room.revision, 'end-game'),
       /already closed/,
@@ -442,6 +449,7 @@ test('simultaneous table-offer acceptances transfer cards to exactly one player'
     const { room: lobbyRoom, sessions } = await lobby(store);
     const host = sessions[0].identity;
     let room = (await store.change(host, lobbyRoom.code, lobbyRoom.revision, 'start'))!;
+    room = await finishOpening(store, room);
     const index = (identity: Identity) =>
       room.game!.players.findIndex(
         (p) => p.id === room.seats.find((s) => s.guestId === identity.guestId)!.id,

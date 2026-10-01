@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { applyAction, RuleError, score, roadSites, settlementSites } from './engine.ts';
 import { RESOURCES, type Action, type Game, type PlayerMetrics } from './types.ts';
 import { createGame } from './engine.ts';
-import { shuffle } from './board.ts';
+import { beginOpening, rollOpening, recordVisuals, DICE_DURATION_MS } from './table-flow.ts';
 import { testingAvailable } from './testing-mode.ts';
 
 const scrypt = promisify(scryptCallback);
@@ -27,6 +27,16 @@ export class ServiceError extends Error {
 function check(condition: unknown, message: string, status = 400): asserts condition {
   if (!condition) throw new ServiceError(message, status);
 }
+export type RoomCommand =
+  | 'start'
+  | 'roll-order'
+  | 'pause'
+  | 'approve-pause'
+  | 'decline-pause'
+  | 'resume'
+  | 'leave'
+  | 'action'
+  | 'end-game';
 export interface Identity {
   sessionHash: string;
   guestId: string;
@@ -38,6 +48,8 @@ export interface Seat {
   name: string;
   guestId: string;
   profileId?: string;
+  color?: number;
+  colorLocked?: boolean;
 }
 export interface Odds {
   revision: number;
@@ -57,7 +69,7 @@ export interface Room {
   testPlayer?: number;
   host: string;
   seats: Seat[];
-  status: 'lobby' | 'playing' | 'paused' | 'finished' | 'ended';
+  status: 'lobby' | 'starting' | 'playing' | 'paused' | 'finished' | 'ended';
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -65,6 +77,17 @@ export interface Room {
   finishedAt?: number;
   game?: Game;
   odds?: Odds;
+  opening?: {
+    revealAt: number;
+    readyAt: number;
+    round: number;
+    contenders: string[];
+    rolls: { playerId: string; values: [number, number]; round: number }[];
+    winner?: string;
+  };
+  diceEvent?: { id: string; playerId: string; color: number; values: [number, number]; at: number };
+  awardEvents?: { id: string; kind: 'longestRoad' | 'largestArmy'; playerId: string; at: number }[];
+  pauseRequest?: { id: string; by: string; votes: string[] };
 }
 interface ProfileRow {
   id: string;
@@ -303,7 +326,11 @@ export class CatanStore {
       room.code,
       JSON.stringify(room),
     );
-    if (room.game && room.status !== 'ended' && room.winProbability !== false)
+    if (
+      room.game &&
+      ['playing', 'paused', 'finished'].includes(room.status) &&
+      room.winProbability !== false
+    )
       await this.query(
         'INSERT INTO jobs(room,revision,snapshot) VALUES(?,?,?) ON CONFLICT(room,revision) DO NOTHING',
         room.code,
@@ -344,6 +371,7 @@ export class CatanStore {
       const seat = {
         id: token(),
         name: playerName,
+        color: 0,
         guestId: identity.guestId,
         profileId: identity.profileId,
       };
@@ -384,9 +412,11 @@ export class CatanStore {
           id: token(),
           guestId: token(),
           name: `Test player ${room.seats.length + 1}`,
+          color: room.seats.length,
+          colorLocked: true,
         });
       let game = createGame(
-        room.seats.map((s) => ({ id: s.id, name: s.name })),
+        room.seats.map((s) => ({ id: s.id, name: s.name, color: s.color })),
         secureRandom,
       );
       while (game.phase.startsWith('setup')) {
@@ -449,9 +479,44 @@ export class CatanStore {
       room.seats.push({
         id: token(),
         name: cleaned,
+        color: [0, 1, 2, 3, 4, 5].find((c) => !room.seats.some((s, i) => (s.color ?? i) === c)),
         guestId: identity.guestId,
         profileId: identity.profileId,
       });
+      room.revision++;
+      await this.save(room);
+      return room;
+    });
+  }
+  async chooseColor(
+    identity: Identity,
+    code: string,
+    revision: number,
+    color: unknown,
+    locked: unknown,
+  ) {
+    return this.transaction(async () => {
+      const room = await this.room(code);
+      const seat = room.seats.find((s) => owns(identity, s));
+      check(seat && room.status === 'lobby', 'Choose your color before the game starts.', 403);
+      check(revision === room.revision, 'The lobby changed. Try again.', 409);
+      check(
+        Number.isInteger(color) &&
+          Number(color) >= 0 &&
+          Number(color) < 6 &&
+          typeof locked === 'boolean',
+        'Choose a color.',
+      );
+      check(
+        !seat.colorLocked || color === (seat.color ?? room.seats.indexOf(seat)),
+        'Unlock your color first.',
+      );
+      check(
+        !room.seats.some((s, i) => s.id !== seat.id && (s.color ?? i) === color),
+        'That color is taken.',
+      );
+      seat.color = Number(color);
+      seat.colorLocked = locked;
       room.revision++;
       await this.save(room);
       return room;
@@ -461,15 +526,21 @@ export class CatanStore {
     identity: Identity,
     code: string,
     revision: number,
-    command: 'start' | 'pause' | 'resume' | 'leave' | 'action' | 'end-game',
+    command: RoomCommand,
     action?: Action,
+    pauseRequestId?: unknown,
   ): Promise<Room | undefined> {
     return this.transaction(async () => {
       const room = await this.room(code);
       const seat = room.seats.find((s) => owns(identity, s));
       check(seat, 'You do not have a seat in this room.', 403);
       check(
-        Number.isSafeInteger(revision) && revision === room.revision,
+        (Number.isSafeInteger(revision) &&
+          revision === room.revision &&
+          (pauseRequestId === undefined || pauseRequestId === room.pauseRequest?.id)) ||
+          (['approve-pause', 'decline-pause'].includes(command) &&
+            typeof pauseRequestId === 'string' &&
+            pauseRequestId === room.pauseRequest?.id),
         'The game changed. Review the latest board and try again.',
         409,
       );
@@ -486,31 +557,50 @@ export class CatanStore {
             ? 'The extended board needs 5–6 players.'
             : 'The base board needs 3–4 players.',
         );
-        room.seats = shuffle(room.seats, secureRandom);
+        room.seats.forEach((s, i) => {
+          s.color ??= i;
+          s.colorLocked = true;
+        });
         room.game = createGame(
-          room.seats.map((s) => ({ id: s.id, name: s.name, profileId: s.profileId })),
+          room.seats.map((s) => ({
+            id: s.id,
+            name: s.name,
+            profileId: s.profileId,
+            color: s.color,
+          })),
           secureRandom,
         );
         room.startedAt = Date.now();
+        beginOpening(room, Date.now());
+      } else if (command === 'roll-order') {
+        rollOpening(room, seat.id, secureRandom, Date.now());
+      } else if (command === 'pause') {
+        check(room.status === 'playing' && !room.pauseRequest, 'A pause cannot be requested now.');
+        const voter = controlledSeat(room, identity)!;
+        room.pauseRequest = { id: token(), by: voter.id, votes: [voter.id] };
+      } else if (command === 'approve-pause' || command === 'decline-pause') {
+        check(room.status === 'playing' && room.pauseRequest, 'There is no pause request.');
+        const voter = controlledSeat(room, identity)!;
+        if (command === 'decline-pause') room.pauseRequest = undefined;
+        else {
+          check(!room.pauseRequest.votes.includes(voter.id), 'You have already agreed.');
+          room.pauseRequest.votes.push(voter.id);
+          if (room.seats.every((s) => room.pauseRequest!.votes.includes(s.id))) {
+            room.status = 'paused';
+            room.pauseRequest = undefined;
+          }
+        }
+      } else if (command === 'resume') {
+        check(room.status === 'paused', 'This game is not paused.');
         room.status = 'playing';
-      } else if (command === 'pause' || command === 'resume') {
-        check(
-          identity.profileId || (room.hosting === 'local' && seat.id === room.host),
-          'Sign in to a profile to pause or resume games.',
-          403,
-        );
-        check(
-          room.status === (command === 'pause' ? 'playing' : 'paused'),
-          'This game cannot be paused or resumed now.',
-        );
-        room.status = command === 'pause' ? 'paused' : 'playing';
       } else if (command === 'end-game') {
         check(seat.id === room.host, 'Only the host can end the game.', 403);
         check(
-          room.game && ['playing', 'paused'].includes(room.status),
+          room.game && ['starting', 'playing', 'paused'].includes(room.status),
           'This game is already closed.',
         );
         room.status = 'ended';
+        room.pauseRequest = undefined;
         room.finishedAt = Date.now();
         room.game.offer = undefined;
         room.game.log.push({
@@ -527,10 +617,21 @@ export class CatanStore {
         if (room.host === seat.id) room.host = room.seats[0].id;
       } else if (command === 'action') {
         check(room.status === 'playing' && room.game && action, 'This game is not active.');
+        check(
+          !room.opening || Date.now() >= room.opening.readyAt,
+          'Wait for the opening dice to settle.',
+        );
+        if (action.type === 'roll' && room.diceEvent)
+          check(
+            Date.now() >= room.diceEvent.at + DICE_DURATION_MS,
+            'Wait for the previous dice to settle.',
+          );
         const actor = controlledSeat(room, identity)!;
         const player = room.game.players.findIndex((p) => p.id === actor.id);
         try {
+          const before = room.game;
           room.game = applyAction(room.game, player, action, secureRandom);
+          recordVisuals(room, before, actor.id, action, Date.now());
           if (room.testing)
             room.testPlayer =
               room.game.phase === 'discard'
@@ -542,6 +643,7 @@ export class CatanStore {
         }
         if (room.game.winner !== undefined) {
           room.status = 'finished';
+          room.pauseRequest = undefined;
           room.finishedAt = Date.now();
           await this.recordResults(room);
         }
