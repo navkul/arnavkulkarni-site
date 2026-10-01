@@ -7,6 +7,9 @@ import type { DatabaseSync } from 'node:sqlite';
 const schema = `
         CREATE SCHEMA IF NOT EXISTS catan;
         CREATE TABLE IF NOT EXISTS catan.profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, password TEXT NOT NULL, created BIGINT NOT NULL);
+        CREATE TABLE IF NOT EXISTS catan.profile_preferences (profile TEXT PRIMARY KEY REFERENCES catan.profiles(id) ON DELETE CASCADE, display_name TEXT NOT NULL, avatar TEXT);
+        CREATE TABLE IF NOT EXISTS catan.profile_media (id TEXT PRIMARY KEY, profile TEXT NOT NULL REFERENCES catan.profiles(id) ON DELETE CASCADE, kind TEXT NOT NULL, mime TEXT NOT NULL, data TEXT NOT NULL, name TEXT NOT NULL, emoji TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 0, created BIGINT NOT NULL);
+        CREATE INDEX IF NOT EXISTS media_profile ON catan.profile_media(profile);
         CREATE TABLE IF NOT EXISTS catan.sessions (hash TEXT PRIMARY KEY, guest TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), expires BIGINT NOT NULL);
         CREATE TABLE IF NOT EXISTS catan.rooms (code TEXT PRIMARY KEY, state TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS catan.results (room TEXT NOT NULL, seat TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), guest TEXT NOT NULL, points INTEGER NOT NULL, won INTEGER NOT NULL, players INTEGER NOT NULL, turns INTEGER NOT NULL, finished BIGINT NOT NULL, metrics TEXT NOT NULL, PRIMARY KEY(room,seat));
@@ -55,7 +58,7 @@ export class PostgresDatabase implements Database {
     const text = sql
       .replace(/\?/g, () => `$${++index}`)
       .replace(
-        /\b(FROM|INTO|UPDATE|JOIN) (profiles|sessions|rooms|results|odds_history|limits|jobs)\b/g,
+        /\b(FROM|INTO|UPDATE|JOIN) (profiles|sessions|rooms|results|odds_history|limits|jobs|profile_preferences|profile_media)\b/g,
         '$1 catan.$2',
       );
     const result = await (this.context.getStore() ?? this.pool).query(text, params);

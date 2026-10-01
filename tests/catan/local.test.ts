@@ -57,11 +57,11 @@ for (const capacity of [3, 5])
       assert.equal(finished.status, 'finished');
       assert.equal((await store.leaderboard()).totals.games, 0);
       assert.equal((await store.query('SELECT * FROM results')).length, 0);
-      assert.equal(await store.canRegister(host), false);
-      await assert.rejects(
-        store.register(host, 'Local profile', 'long password here'),
-        /online games only/,
-      );
+      assert.equal(await store.canRegister(host), true);
+      const localIdentity = (
+        await store.session(await store.register(host, 'Local profile', 'long password here'))
+      ).identity;
+      assert.equal((await store.profile(localIdentity)).games, 0);
     } finally {
       await store.close();
       rmSync(dir, { recursive: true, force: true });
