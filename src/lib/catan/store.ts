@@ -1,5 +1,4 @@
-import { Pool, type PoolClient } from 'pg';
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { LocalDatabase, PostgresDatabase, type Database } from './database.ts';
 import {
   randomBytes,
   randomInt,
@@ -8,10 +7,11 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import { promisify } from 'node:util';
-import { applyAction, RuleError, score } from './engine.ts';
-import { type Action, type Game, type PlayerMetrics } from './types.ts';
+import { applyAction, RuleError, score, roadSites, settlementSites } from './engine.ts';
+import { RESOURCES, type Action, type Game, type PlayerMetrics } from './types.ts';
 import { createGame } from './engine.ts';
-import { shuffle } from './board.ts';
+import { beginOpening, rollOpening, recordVisuals, DICE_DURATION_MS } from './table-flow.ts';
+import { testingAvailable } from './testing-mode.ts';
 
 const scrypt = promisify(scryptCallback);
 export const secureRandom = () => randomInt(0, 0x100000000) / 0x100000000;
@@ -27,6 +27,16 @@ export class ServiceError extends Error {
 function check(condition: unknown, message: string, status = 400): asserts condition {
   if (!condition) throw new ServiceError(message, status);
 }
+export type RoomCommand =
+  | 'start'
+  | 'roll-order'
+  | 'pause'
+  | 'approve-pause'
+  | 'decline-pause'
+  | 'resume'
+  | 'leave'
+  | 'action'
+  | 'end-game';
 export interface Identity {
   sessionHash: string;
   guestId: string;
@@ -38,6 +48,8 @@ export interface Seat {
   name: string;
   guestId: string;
   profileId?: string;
+  color?: number;
+  colorLocked?: boolean;
 }
 export interface Odds {
   revision: number;
@@ -50,10 +62,14 @@ export interface Odds {
 export interface Room {
   code: string;
   name: string;
-  capacity: 4 | 6;
+  capacity: 3 | 4 | 5 | 6;
+  hosting?: 'server' | 'local';
+  winProbability?: boolean;
+  testing?: boolean;
+  testPlayer?: number;
   host: string;
   seats: Seat[];
-  status: 'lobby' | 'playing' | 'paused' | 'finished';
+  status: 'lobby' | 'starting' | 'playing' | 'paused' | 'finished' | 'ended';
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -61,6 +77,17 @@ export interface Room {
   finishedAt?: number;
   game?: Game;
   odds?: Odds;
+  opening?: {
+    revealAt: number;
+    readyAt: number;
+    round: number;
+    contenders: string[];
+    rolls: { playerId: string; values: [number, number]; round: number }[];
+    winner?: string;
+  };
+  diceEvent?: { id: string; playerId: string; color: number; values: [number, number]; at: number };
+  awardEvents?: { id: string; kind: 'longestRoad' | 'largestArmy'; playerId: string; at: number }[];
+  pauseRequest?: { id: string; by: string; votes: string[] };
 }
 interface ProfileRow {
   id: string;
@@ -81,6 +108,13 @@ interface ResultRow {
 }
 export function owns(identity: Identity, seat: Seat) {
   return seat.profileId ? identity.profileId === seat.profileId : identity.guestId === seat.guestId;
+}
+/** The real host owns the sandbox; only its selected test hand changes. */
+export function controlledSeat(room: Room, identity: Identity) {
+  const owner = room.seats.find((s) => owns(identity, s));
+  return room.testing && testingAvailable() && owner?.id === room.host
+    ? room.seats[room.testPlayer ?? 0]
+    : owner;
 }
 export async function passwordHash(password: string): Promise<string> {
   check(
@@ -108,69 +142,17 @@ export function cleanName(name: unknown) {
   return normalized;
 }
 export class CatanStore {
-  readonly pool: Pool;
-  private readonly context = new AsyncLocalStorage<PoolClient>();
-  private readonly ready: Promise<void>;
-  constructor(url: string) {
-    this.pool = new Pool({
-      connectionString: url,
-      max: 5,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 10_000,
-    });
-    this.ready = this.initialize();
-  }
-  private async initialize() {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(739214, 0)');
-      await client.query(`
-        CREATE SCHEMA IF NOT EXISTS catan;
-        CREATE TABLE IF NOT EXISTS catan.profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, password TEXT NOT NULL, created BIGINT NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.sessions (hash TEXT PRIMARY KEY, guest TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), expires BIGINT NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.rooms (code TEXT PRIMARY KEY, state TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.results (room TEXT NOT NULL, seat TEXT NOT NULL, profile TEXT REFERENCES catan.profiles(id), guest TEXT NOT NULL, points INTEGER NOT NULL, won INTEGER NOT NULL, players INTEGER NOT NULL, turns INTEGER NOT NULL, finished BIGINT NOT NULL, metrics TEXT NOT NULL, PRIMARY KEY(room,seat));
-        CREATE INDEX IF NOT EXISTS results_profile ON catan.results(profile);
-        CREATE INDEX IF NOT EXISTS results_guest ON catan.results(guest);
-        CREATE TABLE IF NOT EXISTS catan.odds_history (room TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(room,revision));
-        CREATE TABLE IF NOT EXISTS catan.limits (key TEXT PRIMARY KEY, start BIGINT NOT NULL, count INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS catan.jobs (room TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, published BIGINT NOT NULL DEFAULT 0, completed BOOLEAN NOT NULL DEFAULT FALSE, PRIMARY KEY(room,revision));
-      `);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+  private readonly database: Database;
+  readonly hosting: 'server' | 'local';
+  constructor(url: string, hosting: 'server' | 'local' = 'server') {
+    this.hosting = hosting;
+    this.database = hosting === 'local' ? new LocalDatabase(url) : new PostgresDatabase(url);
   }
   async close() {
-    await this.ready;
-    await this.pool.end();
+    await this.database.close();
   }
   async query(sql: string, ...params: (string | number | null)[]) {
-    await this.ready;
-    let index = 0;
-    const text = sql
-      .replace(/\?/g, () => `$${++index}`)
-      .replace(
-        /\b(FROM|INTO|UPDATE|JOIN) (profiles|sessions|rooms|results|odds_history|limits|jobs)\b/g,
-        '$1 catan.$2',
-      );
-    const result = await (this.context.getStore() ?? this.pool).query(text, params);
-    // PostgreSQL returns BIGINT and NUMERIC as strings; all these values are bounded counts/timestamps.
-    return result.rows.map((row) =>
-      Object.fromEntries(
-        Object.entries(row).map(([key, value]) => [
-          key,
-          result.fields.some((f) => f.name === key && [20, 1700].includes(f.dataTypeID)) &&
-          value !== null
-            ? Number(value)
-            : value,
-        ]),
-      ),
-    );
+    return this.database.query(sql, params);
   }
   private async get<T>(sql: string, ...params: (string | number | null)[]): Promise<T | undefined> {
     return (await this.query(sql, ...params))[0] as T | undefined;
@@ -179,23 +161,7 @@ export class CatanStore {
     return (await this.query(sql, ...params)) as T[];
   }
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
-    await this.ready;
-    if (this.context.getStore()) return fn();
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      // Short writes are serialized across instances, including profile claims and room creation.
-      // Simulations and password hashing always run outside this transaction.
-      await client.query('SELECT pg_advisory_xact_lock(739214, 1)');
-      const result = await this.context.run(client, fn);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.database.transaction(fn);
   }
   async rateLimit(key: string, maximum: number, window = 60_000) {
     return this.transaction(async () => {
@@ -261,6 +227,7 @@ export class CatanStore {
   }
   async canRegister(identity: Identity) {
     return (
+      this.hosting === 'server' &&
       !identity.profileId &&
       !!(await this.get(
         'SELECT 1 FROM results WHERE guest=? AND profile IS NULL LIMIT 1',
@@ -269,6 +236,7 @@ export class CatanStore {
     );
   }
   async register(identity: Identity, name: unknown, password: string) {
+    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     check(!identity.profileId, 'You are already signed in.');
     check(await this.canRegister(identity), 'Complete your first game to create a profile.');
     const cleaned = cleanName(name);
@@ -322,6 +290,7 @@ export class CatanStore {
     });
   }
   async login(identity: Identity, name: unknown, password: string) {
+    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     const cleaned = cleanName(name);
     await this.rateLimit(`login:${cleaned.toLowerCase()}`, 10, 15 * 60_000);
     const profile = await this.get<ProfileRow>(
@@ -357,7 +326,11 @@ export class CatanStore {
       room.code,
       JSON.stringify(room),
     );
-    if (room.game)
+    if (
+      room.game &&
+      ['playing', 'paused', 'finished'].includes(room.status) &&
+      room.winProbability !== false
+    )
       await this.query(
         'INSERT INTO jobs(room,revision,snapshot) VALUES(?,?,?) ON CONFLICT(room,revision) DO NOTHING',
         room.code,
@@ -370,15 +343,21 @@ export class CatanStore {
     name: unknown,
     capacity: number,
     guestName: unknown,
+    winProbability = true,
   ): Promise<Room> {
-    check(capacity === 4 || capacity === 6, 'Choose the 3–4 or 5–6 player board.');
+    check(
+      capacity === 3 || capacity === 4 || capacity === 5 || capacity === 6,
+      'Choose 3–6 players.',
+    );
+    check(typeof winProbability === 'boolean', 'Invalid probability setting.');
     const title = cleanName(name);
     const playerName = identity.name ?? cleanName(guestName);
     await this.rateLimit(`create:${identity.guestId}`, 10, 3600_000);
     return this.transaction(async () => {
       check(
         (await this.rooms()).filter(
-          (r) => r.status !== 'finished' && r.seats.some((s) => owns(identity, s)),
+          (r) =>
+            !['finished', 'ended'].includes(r.status) && r.seats.some((s) => owns(identity, s)),
         ).length < 10,
         'You already have ten open rooms.',
       );
@@ -392,6 +371,7 @@ export class CatanStore {
       const seat = {
         id: token(),
         name: playerName,
+        color: 0,
         guestId: identity.guestId,
         profileId: identity.profileId,
       };
@@ -399,6 +379,8 @@ export class CatanStore {
         code,
         name: title,
         capacity,
+        hosting: this.hosting,
+        winProbability,
         host: seat.id,
         seats: [seat],
         status: 'lobby',
@@ -406,6 +388,79 @@ export class CatanStore {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+      await this.save(room);
+      return room;
+    });
+  }
+  async createTestRoom(
+    identity: Identity,
+    name: unknown,
+    capacity: number,
+    guestName: unknown,
+  ): Promise<Room> {
+    check(
+      testingAvailable() && this.hosting === 'local',
+      'Testing mode is available only in local development.',
+      403,
+    );
+    return this.transaction(async () => {
+      const room = await this.createRoom(identity, name, capacity, guestName, false);
+      room.testing = true;
+      room.testPlayer = 0;
+      while (room.seats.length < capacity)
+        room.seats.push({
+          id: token(),
+          guestId: token(),
+          name: `Test player ${room.seats.length + 1}`,
+          color: room.seats.length,
+          colorLocked: true,
+        });
+      let game = createGame(
+        room.seats.map((s) => ({ id: s.id, name: s.name, color: s.color })),
+        secureRandom,
+      );
+      while (game.phase.startsWith('setup')) {
+        const action: Action =
+          game.phase === 'setup-settlement'
+            ? { type: 'settlement', vertex: settlementSites(game, game.active, true)[0] }
+            : { type: 'road', edge: roadSites(game, game.active, game.setupVertex)[0] };
+        game = applyAction(game, game.active, action, secureRandom);
+      }
+      // Stock every test hand from the bank so builds, cards and trades can be explored.
+      for (const player of game.players)
+        for (const resource of RESOURCES) {
+          const extra = Math.min(game.bank[resource], Math.max(0, 3 - player.resources[resource]));
+          player.resources[resource] += extra;
+          game.bank[resource] -= extra;
+        }
+      room.game = game;
+      room.status = 'playing';
+      room.startedAt = Date.now();
+      room.revision++;
+      await this.save(room);
+      return room;
+    });
+  }
+  async selectTestPlayer(identity: Identity, code: string, revision: number, player: unknown) {
+    check(
+      testingAvailable() && this.hosting === 'local',
+      'Testing mode is available only in local development.',
+      403,
+    );
+    return this.transaction(async () => {
+      const room = await this.room(code);
+      check(
+        room.testing && room.seats.some((s) => s.id === room.host && owns(identity, s)),
+        'Only the test host can control these seats.',
+        403,
+      );
+      check(revision === room.revision, 'The game changed. Try again.', 409);
+      check(
+        Number.isInteger(player) && Number(player) >= 0 && Number(player) < room.seats.length,
+        'Choose a test player.',
+      );
+      room.testPlayer = Number(player);
+      room.revision++;
       await this.save(room);
       return room;
     });
@@ -424,9 +479,44 @@ export class CatanStore {
       room.seats.push({
         id: token(),
         name: cleaned,
+        color: [0, 1, 2, 3, 4, 5].find((c) => !room.seats.some((s, i) => (s.color ?? i) === c)),
         guestId: identity.guestId,
         profileId: identity.profileId,
       });
+      room.revision++;
+      await this.save(room);
+      return room;
+    });
+  }
+  async chooseColor(
+    identity: Identity,
+    code: string,
+    revision: number,
+    color: unknown,
+    locked: unknown,
+  ) {
+    return this.transaction(async () => {
+      const room = await this.room(code);
+      const seat = room.seats.find((s) => owns(identity, s));
+      check(seat && room.status === 'lobby', 'Choose your color before the game starts.', 403);
+      check(revision === room.revision, 'The lobby changed. Try again.', 409);
+      check(
+        Number.isInteger(color) &&
+          Number(color) >= 0 &&
+          Number(color) < 6 &&
+          typeof locked === 'boolean',
+        'Choose a color.',
+      );
+      check(
+        !seat.colorLocked || color === (seat.color ?? room.seats.indexOf(seat)),
+        'Unlock your color first.',
+      );
+      check(
+        !room.seats.some((s, i) => s.id !== seat.id && (s.color ?? i) === color),
+        'That color is taken.',
+      );
+      seat.color = Number(color);
+      seat.colorLocked = locked;
       room.revision++;
       await this.save(room);
       return room;
@@ -436,18 +526,25 @@ export class CatanStore {
     identity: Identity,
     code: string,
     revision: number,
-    command: 'start' | 'pause' | 'resume' | 'leave' | 'action',
+    command: RoomCommand,
     action?: Action,
+    pauseRequestId?: unknown,
   ): Promise<Room | undefined> {
     return this.transaction(async () => {
       const room = await this.room(code);
       const seat = room.seats.find((s) => owns(identity, s));
       check(seat, 'You do not have a seat in this room.', 403);
       check(
-        Number.isSafeInteger(revision) && revision === room.revision,
+        (Number.isSafeInteger(revision) &&
+          revision === room.revision &&
+          (pauseRequestId === undefined || pauseRequestId === room.pauseRequest?.id)) ||
+          (['approve-pause', 'decline-pause'].includes(command) &&
+            typeof pauseRequestId === 'string' &&
+            pauseRequestId === room.pauseRequest?.id),
         'The game changed. Review the latest board and try again.',
         409,
       );
+      check(!room.testing || testingAvailable(), 'Test games require local development.', 403);
       if (command === 'start') {
         check(
           seat.id === room.host && room.status === 'lobby',
@@ -455,25 +552,61 @@ export class CatanStore {
           403,
         );
         check(
-          room.seats.length >= (room.capacity === 6 ? 5 : 3),
-          room.capacity === 6
+          room.seats.length >= (room.capacity >= 5 ? 5 : 3),
+          room.capacity >= 5
             ? 'The extended board needs 5–6 players.'
             : 'The base board needs 3–4 players.',
         );
-        room.seats = shuffle(room.seats, secureRandom);
+        room.seats.forEach((s, i) => {
+          s.color ??= i;
+          s.colorLocked = true;
+        });
         room.game = createGame(
-          room.seats.map((s) => ({ id: s.id, name: s.name, profileId: s.profileId })),
+          room.seats.map((s) => ({
+            id: s.id,
+            name: s.name,
+            profileId: s.profileId,
+            color: s.color,
+          })),
           secureRandom,
         );
         room.startedAt = Date.now();
+        beginOpening(room, Date.now());
+      } else if (command === 'roll-order') {
+        rollOpening(room, seat.id, secureRandom, Date.now());
+      } else if (command === 'pause') {
+        check(room.status === 'playing' && !room.pauseRequest, 'A pause cannot be requested now.');
+        const voter = controlledSeat(room, identity)!;
+        room.pauseRequest = { id: token(), by: voter.id, votes: [voter.id] };
+      } else if (command === 'approve-pause' || command === 'decline-pause') {
+        check(room.status === 'playing' && room.pauseRequest, 'There is no pause request.');
+        const voter = controlledSeat(room, identity)!;
+        if (command === 'decline-pause') room.pauseRequest = undefined;
+        else {
+          check(!room.pauseRequest.votes.includes(voter.id), 'You have already agreed.');
+          room.pauseRequest.votes.push(voter.id);
+          if (room.seats.every((s) => room.pauseRequest!.votes.includes(s.id))) {
+            room.status = 'paused';
+            room.pauseRequest = undefined;
+          }
+        }
+      } else if (command === 'resume') {
+        check(room.status === 'paused', 'This game is not paused.');
         room.status = 'playing';
-      } else if (command === 'pause' || command === 'resume') {
-        check(identity.profileId, 'Sign in to a profile to pause or resume games.', 403);
+      } else if (command === 'end-game') {
+        check(seat.id === room.host, 'Only the host can end the game.', 403);
         check(
-          room.status === (command === 'pause' ? 'playing' : 'paused'),
-          'This game cannot be paused or resumed now.',
+          room.game && ['starting', 'playing', 'paused'].includes(room.status),
+          'This game is already closed.',
         );
-        room.status = command === 'pause' ? 'paused' : 'playing';
+        room.status = 'ended';
+        room.pauseRequest = undefined;
+        room.finishedAt = Date.now();
+        room.game.offer = undefined;
+        room.game.log.push({
+          turn: room.game.turn,
+          text: `${seat.name} ended the game early. No results were recorded.`,
+        });
       } else if (command === 'leave') {
         check(room.status === 'lobby', 'You can only leave before the game starts.');
         room.seats = room.seats.filter((s) => s.id !== seat.id);
@@ -484,15 +617,33 @@ export class CatanStore {
         if (room.host === seat.id) room.host = room.seats[0].id;
       } else if (command === 'action') {
         check(room.status === 'playing' && room.game && action, 'This game is not active.');
-        const player = room.game.players.findIndex((p) => p.id === seat.id);
+        check(
+          !room.opening || Date.now() >= room.opening.readyAt,
+          'Wait for the opening dice to settle.',
+        );
+        if (action.type === 'roll' && room.diceEvent)
+          check(
+            Date.now() >= room.diceEvent.at + DICE_DURATION_MS,
+            'Wait for the previous dice to settle.',
+          );
+        const actor = controlledSeat(room, identity)!;
+        const player = room.game.players.findIndex((p) => p.id === actor.id);
         try {
+          const before = room.game;
           room.game = applyAction(room.game, player, action, secureRandom);
+          recordVisuals(room, before, actor.id, action, Date.now());
+          if (room.testing)
+            room.testPlayer =
+              room.game.phase === 'discard'
+                ? Number(Object.keys(room.game.discard)[0])
+                : room.game.active;
         } catch (error) {
           if (error instanceof RuleError) throw new ServiceError(error.message);
           throw error;
         }
         if (room.game.winner !== undefined) {
           room.status = 'finished';
+          room.pauseRequest = undefined;
           room.finishedAt = Date.now();
           await this.recordResults(room);
         }
@@ -503,6 +654,7 @@ export class CatanStore {
     });
   }
   private async recordResults(room: Room) {
+    if (room.testing || this.hosting === 'local' || room.hosting === 'local') return;
     const game = room.game!;
     for (const [i, p] of game.players.entries()) {
       const seat = room.seats.find((s) => s.id === p.id)!;
@@ -638,6 +790,7 @@ export class CatanStore {
     return { rows, anonymous: anonymous!, totals: totals! };
   }
   async profile(identity: Identity) {
+    check(this.hosting === 'server', 'Profiles are available in online games only.', 403);
     check(identity.profileId, 'Sign in to see personal statistics.', 401);
     const results = await this.all<ResultRow>(
       'SELECT * FROM results WHERE profile=? ORDER BY finished DESC',

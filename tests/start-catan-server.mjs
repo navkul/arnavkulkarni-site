@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { CatanStore } from '../src/lib/catan/store.ts';
 import { resolve } from 'node:path';
@@ -10,9 +11,13 @@ await store.query(
   'TRUNCATE catan.profiles,catan.sessions,catan.rooms,catan.results,catan.odds_history,catan.limits,catan.jobs CASCADE',
 );
 await store.close();
+const localPath = resolve(root, '.data/catan-browser-local.sqlite');
+for (const suffix of ['', '-wal', '-shm']) await rm(localPath + suffix, { force: true });
 const env = {
   ...process.env,
   CATAN_DATABASE_URL: url,
+  CATAN_LOCAL_DATABASE_PATH: localPath,
+  CATAN_ALLOW_LOCAL_HOST: '1',
   CATAN_SIMULATION_SAMPLES: '8',
   NEXT_TELEMETRY_DISABLED: '1',
 };

@@ -1,7 +1,30 @@
+export const PLAYER_COLORS = [
+  '#bd5038',
+  '#287eb2',
+  '#d49a2a',
+  '#7962a4',
+  '#448369',
+  '#bf7290',
+] as const;
+export const PLAYER_COLOR_NAMES = [
+  'Terracotta',
+  'Ocean',
+  'Ochre',
+  'Violet',
+  'Forest',
+  'Rose',
+] as const;
 export const RESOURCES = ['wood', 'brick', 'sheep', 'wheat', 'ore'] as const;
 export type Resource = (typeof RESOURCES)[number];
 export type Cards = Record<Resource, number>;
 export type Development = 'knight' | 'victory' | 'roads' | 'plenty' | 'monopoly';
+export const DEVELOPMENT_NAMES: Record<Development, string> = {
+  knight: 'Knight',
+  victory: 'Victory point',
+  roads: 'Road building',
+  plenty: 'Year of plenty',
+  monopoly: 'Monopoly',
+};
 export type Random = () => number;
 export type Phase =
   'setup-settlement' | 'setup-road' | 'roll' | 'discard' | 'robber' | 'trade' | 'finished';
@@ -34,6 +57,8 @@ export interface Board {
   vertices: Vertex[];
   edges: Edge[];
   robber: number;
+  tokenOrder?: number[];
+  ports?: { edge: number; resource: Resource | 'any' }[];
 }
 export interface PlayerMetrics {
   produced: Cards;
@@ -48,18 +73,20 @@ export interface PlayerMetrics {
   developmentBought: number;
 }
 export interface Player {
+  color?: number;
   id: string;
   name: string;
   profileId?: string;
   resources: Cards;
   development: { kind: Development; boughtTurn: number }[];
+  playedDevelopment?: { kind: Exclude<Development, 'victory'>; turn: number }[];
   knights: number;
   metrics: PlayerMetrics;
 }
 export interface Offer {
   id: number;
   from: number;
-  to: number;
+  to: number | 'all';
   give: Cards;
   receive: Cards;
 }
@@ -94,7 +121,7 @@ export type Action =
   | { type: 'discard'; cards: Cards }
   | { type: 'robber'; hex: number; victim?: number }
   | { type: 'bank-trade'; give: Resource; receive: Resource }
-  | { type: 'offer'; to: number; give: Cards; receive: Cards }
+  | { type: 'offer'; to: number | 'all'; give: Cards; receive: Cards }
   | { type: 'accept-trade'; offer: number }
   | { type: 'development'; card: 'knight' }
   | { type: 'development'; card: 'monopoly'; resource: Resource }

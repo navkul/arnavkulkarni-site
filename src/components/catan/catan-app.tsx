@@ -1,20 +1,26 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import GameTable from './game-table';
-import { PLAYER_COLORS } from './board';
+import SettingHelp from './setting-help';
+import { PLAYER_COLORS, PLAYER_COLOR_NAMES } from '@/lib/catan/types';
 import type { Action } from '@/lib/catan/types';
 import type { RoomSummary, RoomView } from '@/lib/catan/view';
 import type { CatanStore, Odds } from '@/lib/catan/store';
 
 interface Bootstrap {
+  hosting: 'server' | 'local';
+  localAddresses: string[];
   user: { name: string | null; registered: boolean; canRegister: boolean };
   rooms: RoomSummary[];
 }
 type Leaderboard = Awaited<ReturnType<CatanStore['leaderboard']>>;
 type Profile = Awaited<ReturnType<CatanStore['profile']>>;
-async function api<T>(query = '', body?: unknown): Promise<T> {
-  const res = await fetch(`/api/catan${query}`, {
+async function request<T>(hosting: 'server' | 'local', query = '', body?: unknown): Promise<T> {
+  const params = new URLSearchParams(query);
+  params.set('hosting', hosting);
+  const res = await fetch(`/api/catan?${params}`, {
     cache: 'no-store',
     ...(body
       ? {
@@ -28,12 +34,32 @@ async function api<T>(query = '', body?: unknown): Promise<T> {
   if (!res.ok) throw new Error(data.error ?? 'Request failed. Please try again.');
   return data as T;
 }
-export default function CatanApp({ initialCode = '' }: { initialCode?: string }) {
+export default function CatanApp({
+  initialCode = '',
+  initialHosting = 'server',
+  localAvailable = false,
+  localOnly = false,
+  testingAvailable = false,
+}: {
+  initialCode?: string;
+  initialHosting?: 'server' | 'local';
+  localAvailable?: boolean;
+  localOnly?: boolean;
+  testingAvailable?: boolean;
+}) {
+  const [selfHost, setSelfHost] = useState(initialHosting === 'local');
+  const hosting = selfHost && localAvailable ? 'local' : 'server';
+  const api = useCallback(
+    <T,>(query = '', body?: unknown) => request<T>(hosting, query, body),
+    [hosting],
+  );
+  const [winProbability, setWinProbability] = useState(true);
+  const [findLocal, setFindLocal] = useState(false);
   const [bootstrap, setBootstrap] = useState<Bootstrap>();
   const [room, setRoom] = useState<RoomView>();
   const [code, setCode] = useState(initialCode);
   const [history, setHistory] = useState<Odds[]>([]);
-  const [tab, setTab] = useState<'play' | 'leaderboard' | 'profile'>('play');
+  const [tab, setTab] = useState<'play' | 'profile'>('play');
   const [leaderboard, setLeaderboard] = useState<Leaderboard>();
   const [profile, setProfile] = useState<Profile>();
   const [busy, setBusy] = useState(false),
@@ -41,7 +67,7 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
     [offline, setOffline] = useState(false);
   const [auth, setAuth] = useState<'login' | 'register'>();
   const [guestName, setGuestName] = useState(''),
-    [roomName, setRoomName] = useState('Friday night'),
+    [roomName, setRoomName] = useState(''),
     [capacity, setCapacity] = useState(4),
     [joinCode, setJoinCode] = useState('');
   const [profileName, setProfileName] = useState(''),
@@ -69,13 +95,14 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
         );
         setHistory(result.history);
       }
-      if (tab === 'leaderboard') setLeaderboard(await api<Leaderboard>('?leaderboard'));
+      if (tab === 'play' && !code && hosting === 'server')
+        setLeaderboard(await api<Leaderboard>('?leaderboard'));
       if (tab === 'profile' && data.user.registered) setProfile(await api<Profile>('?profile'));
     } catch (err) {
       setOffline(true);
       setError((err as Error).message);
     }
-  }, [code, tab]);
+  }, [code, tab, api, hosting]);
   useEffect(() => {
     const seq = sequence;
     let disposed = false;
@@ -91,7 +118,7 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
       seq.current++;
     };
   }, [refresh]);
-  function openRoom(next: string) {
+  function openRoom(next: string, nextHosting = hosting) {
     setCode(next);
     currentCode.current = next;
     setRoom(undefined);
@@ -99,15 +126,18 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
     setTab('play');
     setError('');
     setCopied(false);
-    window.history.replaceState(null, '', next ? `/catan?room=${next}` : '/catan');
+    const params = new URLSearchParams();
+    if (next) params.set('room', next);
+    if (nextHosting === 'local') params.set('hosting', 'local');
+    window.history.replaceState(null, '', `/catan${params.size ? '?' + params : ''}`);
   }
-  async function run(fn: () => Promise<void>) {
+  async function run(fn: () => Promise<void>, refreshAfter = true) {
     if (busy) return;
     setBusy(true);
     setError('');
     try {
       await fn();
-      await refresh();
+      if (refreshAfter) await refresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -122,24 +152,82 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
         code: room.code,
         revision: room.revision,
         action,
+        ...(['approve-pause', 'decline-pause'].includes(command)
+          ? { pauseRequestId: room.pauseRequest?.id }
+          : {}),
       });
       if (command === 'leave' || !result.room) openRoom('');
       else setRoom(result.room);
     });
   }
   const user = bootstrap?.user;
+  const enterProfile = () =>
+    void run(async () => {
+      if (!auth) return;
+      await api('', { command: auth, name: profileName, password });
+      setPassword('');
+      setAuth(undefined);
+      setRoom(undefined);
+    });
+  const nameAccount = guestName.trim() && !user?.registered && hosting === 'server' && (
+    <details className="ct-name-account">
+      <summary>Use a profile</summary>
+      <div
+        className="ct-name-dropdown"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && auth) {
+            e.preventDefault();
+            if (profileName && password) enterProfile();
+          }
+        }}
+      >
+        <div className="ct-action-row">
+          <button type="button" className="ct-text-button" onClick={() => setAuth('login')}>
+            Sign in
+          </button>
+          {user?.canRegister && (
+            <button type="button" className="ct-text-button" onClick={() => setAuth('register')}>
+              Create profile
+            </button>
+          )}
+        </div>
+        {auth && (
+          <>
+            <input
+              aria-label="Profile name"
+              autoComplete="username"
+              placeholder="Profile name"
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+            />
+            <input
+              aria-label="Password"
+              type="password"
+              autoComplete={auth === 'register' ? 'new-password' : 'current-password'}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button type="button" disabled={busy} className="ct-primary" onClick={enterProfile}>
+              {auth === 'register' ? 'Create profile' : 'Sign in to profile'}
+            </button>
+          </>
+        )}
+      </div>
+    </details>
+  );
   return (
-    <main className="ct-app">
+    <main className={`ct-app${code ? ' ct-in-game' : ''}`}>
       <header className="ct-header">
         <Link href="/" className="ct-back">
-          ↖ arnavkulkarni
+          ← Home
         </Link>
-        <Link href="/catan" className="ct-wordmark">
-          CATAN<span>AT THE TABLE</span>
-        </Link>
-        <div>
-          {user?.registered ? (
+        <div className="ct-account-actions">
+          {hosting === 'local' ? (
+            <span className="ct-muted">Local · unranked</span>
+          ) : user?.registered ? (
             <button
+              className="ct-text-button"
               onClick={() => {
                 setTab('profile');
                 setAuth(undefined);
@@ -147,31 +235,9 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
             >
               {user.name}
             </button>
-          ) : (
-            <button onClick={() => setAuth('login')}>Sign in</button>
-          )}
+          ) : null}
         </div>
       </header>
-      <nav className="ct-nav" aria-label="Catan navigation">
-        <button aria-current={tab === 'play' ? 'page' : undefined} onClick={() => setTab('play')}>
-          Play
-        </button>
-        <button
-          aria-current={tab === 'leaderboard' ? 'page' : undefined}
-          onClick={() => setTab('leaderboard')}
-        >
-          Leaderboard
-        </button>
-        <button
-          aria-current={tab === 'profile' ? 'page' : undefined}
-          onClick={() => setTab('profile')}
-        >
-          My stats
-        </button>
-        <span className={`ct-connection ${offline ? 'ct-disconnected' : ''}`}>
-          {offline ? 'Reconnecting…' : bootstrap ? 'Connected to the table' : 'Connecting…'}
-        </span>
-      </nav>
       {error && (
         <div className="ct-error" role="alert">
           {error}
@@ -182,13 +248,13 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
       )}
       {offline && (
         <p className="ct-offline" role="status">
-          Connection interrupted. Your game is saved on the server. Reconnecting automatically.
+          Connection lost. Reconnecting…
         </p>
       )}
-      {auth && (
+      {auth && (tab === 'profile' || !!room?.game) && (
         <section className="ct-panel ct-auth">
           <div className="ct-section-heading">
-            <h2>{auth === 'register' ? 'Keep your place in the story.' : 'Welcome back.'}</h2>
+            <h2>{auth === 'register' ? 'Create profile' : 'Sign in'}</h2>
             <button onClick={() => setAuth(undefined)} aria-label="Close account form">
               ×
             </button>
@@ -241,35 +307,19 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
       )}
       {tab === 'play' && !code && (
         <>
-          <section className="ct-hero">
-            <div>
-              <span className="ct-eyebrow">3–6 friends. One island.</span>
-              <h1>
-                Good company.
-                <br />
-                Great rivalries.
-              </h1>
-              <p>
-                Gather around an island of possibility. Build a little, trade a lot, and make your
-                way to ten points.
-              </p>
-              <div className="ct-hero-tags">
-                <span>No account needed</span>
-                <span>Live win estimates</span>
-                <span>Made for game night</span>
-              </div>
-            </div>
-            <div className="ct-mini-island" aria-hidden="true">
-              {['wood', 'wheat', 'ore', 'brick', 'sheep', 'wood', 'wheat'].map((r, i) => (
-                <span className={`ct-mini-hex ct-${r}`} key={i}>
-                  <b>{[6, 9, 5, 8, 4, 10, 3][i]}</b>
-                </span>
-              ))}
-            </div>
-          </section>
+          <h1 className="ct-page-title ct-logo-heading">
+            <Image
+              src="/catan/catan-logo.svg"
+              alt=""
+              width={160}
+              height={64}
+              className="ct-official-logo"
+              priority
+            />
+            <span>CATAN</span>
+          </h1>
           <div className="ct-lobby-grid">
-            <section className="ct-panel">
-              <span className="ct-eyebrow">Make room for everyone</span>
+            <section className="ct-lobby-section">
               <h2>Start a table</h2>
               <form
                 onSubmit={(e) => {
@@ -280,50 +330,161 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
                       name: roomName,
                       capacity,
                       guestName,
+                      winProbability,
+                      selfHost,
                     });
                     openRoom(result.room.code);
                     setRoom(result.room);
                   });
                 }}
               >
-                {!user?.registered && (
-                  <label>
-                    Your name at the table
-                    <input
-                      value={guestName}
-                      onChange={(e) => setGuestName(e.target.value)}
-                      minLength={2}
-                      maxLength={24}
-                      placeholder="e.g. Arnav"
-                      required
-                    />
-                  </label>
-                )}
                 <label>
-                  Table name
+                  <span className="ct-sr-only">Table name</span>
                   <input
                     value={roomName}
                     onChange={(e) => setRoomName(e.target.value)}
                     minLength={2}
                     maxLength={24}
+                    placeholder="Table name"
                     required
                   />
                 </label>
                 <label>
-                  Island size
-                  <select value={capacity} onChange={(e) => setCapacity(Number(e.target.value))}>
-                    <option value={4}>Classic island · 3–4 players</option>
-                    <option value={6}>Extended island · 5–6 players</option>
-                  </select>
+                  <span className="ct-sr-only">Your name</span>
+                  <input
+                    value={user?.registered ? (user.name ?? '') : guestName}
+                    onChange={(e) => {
+                      setGuestName(e.target.value);
+                      setProfileName(e.target.value);
+                    }}
+                    readOnly={user?.registered}
+                    minLength={2}
+                    maxLength={24}
+                    autoComplete="nickname"
+                    placeholder="Your name"
+                    required
+                  />
                 </label>
-                <button className="ct-primary" disabled={busy || !bootstrap}>
-                  Create a table ↗
+                {nameAccount}
+                <details className="ct-settings">
+                  <summary>Settings</summary>
+                  <div className="ct-setting-row">
+                    <label htmlFor="ct-probability">Player win probability</label>
+                    <SettingHelp label="player win probability">
+                      Show estimated chances of winning after each move. These are simulations, not
+                      guarantees.
+                    </SettingHelp>
+                    <input
+                      id="ct-probability"
+                      type="checkbox"
+                      role="switch"
+                      checked={winProbability}
+                      onChange={(e) => setWinProbability(e.target.checked)}
+                    />
+                  </div>
+                  <div className="ct-setting-row">
+                    <label htmlFor="ct-players">Players</label>
+                    <SettingHelp label="players">
+                      Maximum seats, from 3 to 6. Five or six players use the larger island and
+                      paired turns.
+                    </SettingHelp>
+                    <output htmlFor="ct-players">{capacity}</output>
+                  </div>
+                  <input
+                    id="ct-players"
+                    className="ct-range"
+                    type="range"
+                    min="3"
+                    max="6"
+                    step="1"
+                    value={capacity}
+                    onChange={(e) => setCapacity(Number(e.target.value))}
+                  />
+                  <div className="ct-range-labels" aria-hidden="true">
+                    <span>3</span>
+                    <span>4</span>
+                    <span>5</span>
+                    <span>6</span>
+                  </div>
+                  <div className="ct-setting-row">
+                    <label htmlFor="ct-self-host">Self-host</label>
+                    <SettingHelp label="self-host">
+                      Host on a computer on your Wi-Fi or hotspot. Works without internet once set
+                      up. Local games never count toward stats.
+                    </SettingHelp>
+                    <input
+                      id="ct-self-host"
+                      type="checkbox"
+                      role="switch"
+                      checked={selfHost}
+                      disabled={localOnly}
+                      onChange={(e) => {
+                        setSelfHost(e.target.checked);
+                        if (localAvailable)
+                          window.history.replaceState(
+                            null,
+                            '',
+                            e.target.checked ? '/catan?hosting=local' : '/catan',
+                          );
+                        setFindLocal(false);
+                        setError('');
+                        setBootstrap(undefined);
+                        setAuth(undefined);
+                      }}
+                    />
+                  </div>
+                  {selfHost && (
+                    <p className="ct-local-note">
+                      {localAvailable ? (
+                        'Keep this computer running. Local games don’t count toward stats.'
+                      ) : (
+                        <>
+                          Run the local host on this computer first.{' '}
+                          <Link href="/catan/local">Set up offline play →</Link>
+                        </>
+                      )}
+                    </p>
+                  )}
+                </details>
+                <button
+                  className="ct-primary"
+                  disabled={busy || !bootstrap || (selfHost && !localAvailable)}
+                >
+                  Start table
                 </button>
               </form>
+              {testingAvailable && (
+                <div className="ct-test-start">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        const result = await request<{ room: RoomView }>('local', '', {
+                          command: 'create-test',
+                          name: roomName.trim() || 'Test table',
+                          guestName: guestName.trim() || 'You',
+                          capacity,
+                        });
+                        setSelfHost(true);
+                        setBootstrap(undefined);
+                        setOffline(false);
+                        setAuth(undefined);
+                        openRoom(result.room.code, 'local');
+                        setRoom(result.room);
+                      }, false)
+                    }
+                  >
+                    Start test game
+                  </button>
+                  <p className="ct-muted">
+                    Development only · control all {capacity} seats · no stats
+                  </p>
+                </div>
+              )}
             </section>
-            <section className="ct-panel">
-              <span className="ct-eyebrow">An invitation to the island</span>
-              <h2>Join your friends</h2>
+            <section className="ct-lobby-section">
+              <h2>Join a table</h2>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -331,48 +492,68 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
                 }}
               >
                 <label>
-                  Six-character room code
+                  <span className="ct-sr-only">Table code</span>
                   <input
                     value={joinCode}
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     minLength={6}
                     maxLength={6}
-                    placeholder="ABC234"
-                    required
+                    placeholder="Table code"
                     autoCapitalize="characters"
+                    required
                   />
                 </label>
-                <button disabled={busy || !bootstrap}>Find table →</button>
+                <button className="ct-primary" disabled={busy || !bootstrap}>
+                  Join table
+                </button>
               </form>
-              <p className="ct-muted">
-                On the same Wi-Fi? Open the host’s network address on each device, then enter the
-                room code or share the invite link.
-              </p>
-              <p className="ct-muted">
-                Play your first game as a guest. Afterward, create a profile to keep your stats and
-                pause future games.
-              </p>
+              {hosting === 'local' && (
+                <div className="ct-local-tables">
+                  <button
+                    className="ct-text-button"
+                    onClick={() => setFindLocal(!findLocal)}
+                    aria-expanded={findLocal}
+                  >
+                    Find local tables
+                  </button>
+                  {findLocal && (
+                    <div className="ct-room-list">
+                      {bootstrap?.rooms
+                        .filter((r) => r.status === 'lobby' || r.mine)
+                        .map((r) => (
+                          <button key={r.code} onClick={() => openRoom(r.code)}>
+                            <span>
+                              {r.name}
+                              <small>
+                                {r.players}/{r.capacity} players
+                              </small>
+                            </span>
+                            <span>{r.code} →</span>
+                          </button>
+                        ))}
+                      {!bootstrap?.rooms.length && <p className="ct-muted">No local tables yet.</p>}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!!bootstrap?.rooms.some((r) => r.mine) && !findLocal && (
+                <div className="ct-room-list ct-your-tables">
+                  <h3>Your tables</h3>
+                  {bootstrap.rooms
+                    .filter((r) => r.mine)
+                    .map((r) => (
+                      <button key={r.code} onClick={() => openRoom(r.code)}>
+                        <span>
+                          {r.name}
+                          <small>{r.status}</small>
+                        </span>
+                        <span>→</span>
+                      </button>
+                    ))}
+                </div>
+              )}
             </section>
           </div>
-          {(bootstrap?.rooms.length ?? 0) > 0 && (
-            <section className="ct-tables">
-              <h2>Your next game night</h2>
-              <div className="ct-room-list">
-                {bootstrap!.rooms.map((r) => (
-                  <button key={r.code} onClick={() => openRoom(r.code)}>
-                    <span>
-                      <strong>{r.name}</strong>
-                      <small>
-                        {r.mine ? 'Your table' : 'Open table'} · {r.players}/{r.capacity} players ·{' '}
-                        {r.status}
-                      </small>
-                    </span>
-                    <span>{r.code} ↗</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
         </>
       )}
       {tab === 'play' && code && (
@@ -385,12 +566,16 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
             </div>
             <button
               onClick={() => {
+                const invite =
+                  room?.hosting === 'local' && bootstrap?.localAddresses[0]
+                    ? `${bootstrap.localAddresses[0]}&room=${code}`
+                    : window.location.href;
                 if (!navigator.clipboard) {
-                  setError(`Invite link: ${window.location.href}`);
+                  setError(`Invite link: ${invite}`);
                   return;
                 }
                 void navigator.clipboard
-                  ?.writeText(window.location.href)
+                  ?.writeText(invite)
                   .then(() => setCopied(true))
                   .catch(() => setError('Copy the address from your browser to invite friends.'));
               }}
@@ -398,6 +583,16 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
               {copied ? 'Link copied' : 'Copy invite link'}
             </button>
           </div>
+          {room?.hosting === 'local' && !!bootstrap?.localAddresses.length && (
+            <p className="ct-local-address">
+              Join on this Wi-Fi:{' '}
+              {bootstrap.localAddresses.map((address) => (
+                <a key={address} href={`${address}&room=${code}`}>
+                  {address.split('?')[0]}?hosting=local&amp;room={code}
+                </a>
+              ))}
+            </p>
+          )}
           {!room && (
             <p className="ct-muted">
               Loading table. If the room code is incorrect, return to all tables and check the
@@ -413,7 +608,11 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
               <div className="ct-seat-grid">
                 {Array.from({ length: room.capacity }, (_, i) => (
                   <div className={room.seats[i] ? 'ct-seat-filled' : 'ct-seat-empty'} key={i}>
-                    <span style={{ background: room.seats[i] ? PLAYER_COLORS[i] : '#dedfd3' }}>
+                    <span
+                      style={{
+                        background: room.seats[i] ? PLAYER_COLORS[room.seats[i].color] : '#dedfd3',
+                      }}
+                    >
                       {room.seats[i]?.name[0] ?? '+'}
                     </span>
                     <strong>{room.seats[i]?.name ?? 'Open seat'}</strong>
@@ -425,6 +624,49 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
                   </div>
                 ))}
               </div>
+              {room.joined &&
+                room.status === 'lobby' &&
+                (() => {
+                  const mine = room.seats.find((s) => s.me)!;
+                  const choose = (color: number, locked: boolean) =>
+                    void run(async () => {
+                      const result = await api<{ room: RoomView }>('', {
+                        command: 'color',
+                        code,
+                        revision: room.revision,
+                        color,
+                        locked,
+                      });
+                      setRoom(result.room);
+                    });
+                  return (
+                    <div className="ct-color-picker" aria-label="Your player color">
+                      {PLAYER_COLORS.map((color, i) => (
+                        <button
+                          key={color}
+                          type="button"
+                          aria-label={`${PLAYER_COLOR_NAMES[i]} color`}
+                          title={PLAYER_COLOR_NAMES[i]}
+                          aria-pressed={mine.color === i}
+                          style={{ background: color }}
+                          disabled={
+                            busy ||
+                            mine.colorLocked ||
+                            room.seats.some((s) => !s.me && s.color === i)
+                          }
+                          onClick={() => choose(i, false)}
+                        />
+                      ))}
+                      <button
+                        className="ct-color-lock"
+                        disabled={busy}
+                        onClick={() => choose(mine.color, !mine.colorLocked)}
+                      >
+                        {mine.colorLocked ? 'Unlock color' : 'Lock color'}
+                      </button>
+                    </div>
+                  );
+                })()}
               {!room.joined && (
                 <form
                   className="ct-inline-form"
@@ -442,16 +684,21 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
                 >
                   {!user?.registered && (
                     <label>
-                      Your name at the table
+                      <span className="ct-sr-only">Your name at the table</span>
                       <input
+                        placeholder="Your name"
                         minLength={2}
                         maxLength={24}
                         required
                         value={guestName}
-                        onChange={(e) => setGuestName(e.target.value)}
+                        onChange={(e) => {
+                          setGuestName(e.target.value);
+                          setProfileName(e.target.value);
+                        }}
                       />
                     </label>
                   )}
+                  {nameAccount}
                   <button
                     className="ct-primary"
                     disabled={busy || room.seats.length >= room.capacity}
@@ -465,7 +712,7 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
                   {room.isHost ? (
                     <button
                       className="ct-primary"
-                      disabled={busy || room.seats.length < (room.capacity === 6 ? 5 : 3)}
+                      disabled={busy || room.seats.length < (room.capacity >= 5 ? 5 : 3)}
                       onClick={() => void command('start')}
                     >
                       Start game
@@ -479,34 +726,78 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
                 </div>
               )}
               <p className="ct-muted">
-                {room.capacity === 6
+                {room.capacity >= 5
                   ? '5–6 player island with paired turns. After the primary player, the player three seats ahead can build and trade with the bank.'
                   : '3–4 player classic island.'}{' '}
-                Starting order is randomized. Everyone places two settlements and two roads.
+                Roll for first player, then play clockwise. Everyone places two settlements and two
+                roads.
               </p>
             </section>
           )}
           {room?.game && (
             <>
+              {testingAvailable && room.testing && (
+                <div className="ct-test-toolbar">
+                  <span>
+                    <strong>Test game</strong> · You control every seat. Turns switch automatically.
+                  </span>
+                  <label>
+                    View / control player
+                    <select
+                      value={room.me}
+                      disabled={busy}
+                      onChange={(e) =>
+                        void run(async () => {
+                          const result = await api<{ room: RoomView }>('', {
+                            command: 'test-player',
+                            code: room.code,
+                            revision: room.revision,
+                            player: Number(e.target.value),
+                          });
+                          setRoom(result.room);
+                        })
+                      }
+                    >
+                      {room.game.players.map((p, i) => (
+                        <option key={i} value={i}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
               <GameTable
-                key={`${room.code}:${room.revision}`}
+                key={room.code}
                 room={room}
                 history={history}
                 busy={busy || offline}
                 act={(action) => command('action', action)}
                 command={command}
               />
+              {room.status === 'ended' && (
+                <section className="ct-panel">
+                  <p>This table is closed. Player stats are unchanged.</p>
+                  <button onClick={() => openRoom('')}>Back to tables</button>
+                </section>
+              )}
               {room.status === 'finished' && (
                 <section className="ct-panel ct-finished">
                   <h2>The game is in the books.</h2>
                   <p>
-                    Results are saved.{' '}
-                    {user?.registered
-                      ? 'Your profile and the leaderboard have been updated.'
-                      : 'Your result counts anonymously unless you choose to create a profile.'}
+                    {room.hosting === 'local' ? (
+                      'Saved on this host. This game does not count toward stats.'
+                    ) : (
+                      <>
+                        Results are saved.{' '}
+                        {user?.registered
+                          ? 'Your profile and the leaderboard have been updated.'
+                          : 'Your result counts anonymously unless you choose to create a profile.'}
+                      </>
+                    )}
                   </p>
                   <div className="ct-action-row">
-                    {!user?.registered && (
+                    {room.hosting !== 'local' && !user?.registered && (
                       <button
                         className="ct-primary"
                         onClick={() => {
@@ -518,7 +809,7 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
                       </button>
                     )}
                     <button onClick={() => openRoom('')}>Back to tables</button>
-                    <button onClick={() => setTab('leaderboard')}>View leaderboard</button>
+                    <button onClick={() => openRoom('')}>View leaderboard</button>
                   </div>
                 </section>
               )}
@@ -526,67 +817,50 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
           )}
         </>
       )}
-      {tab === 'leaderboard' && (
-        <section className="ct-stats-page">
-          <span className="ct-eyebrow">The island remembers</span>
-          <h1>Bragging rights.</h1>
-          <p>
-            Public profile stats, ranked by win rate, then games played and average points. Small
-            samples can be misleading—check the game count.
-          </p>
-          {leaderboard ? (
-            <>
-              <div className="ct-stat-grid">
-                <Stat label="Games completed" value={leaderboard.totals.games} />
-                <Stat label="Anonymous appearances" value={leaderboard.anonymous.appearances} />
-                <Stat label="Anonymous wins" value={leaderboard.anonymous.wins} />
-              </div>
-              <div className="ct-panel ct-table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Rank</th>
-                      <th>Player</th>
-                      <th>Games</th>
-                      <th>Wins</th>
-                      <th>Win rate</th>
-                      <th>Avg. points</th>
+      {tab === 'play' && !code && (
+        <section className="ct-leaderboard" id="leaderboard" aria-labelledby="ct-leaderboard-title">
+          <h2 id="ct-leaderboard-title">Leaderboard</h2>
+          {hosting === 'local' ? (
+            <p className="ct-muted">
+              Local games don’t count toward stats. The leaderboard is available online.
+            </p>
+          ) : leaderboard ? (
+            <div className="ct-table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Player</th>
+                    <th scope="col">Games</th>
+                    <th scope="col">Wins</th>
+                    <th scope="col">Win rate</th>
+                    <th scope="col">Avg. points</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard.rows.map((r) => (
+                    <tr key={r.name}>
+                      <th scope="row">{r.name}</th>
+                      <td>{r.games}</td>
+                      <td>{r.wins}</td>
+                      <td>{r.winRate}%</td>
+                      <td>{r.averagePoints}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {leaderboard.rows.map((r, i) => (
-                      <tr key={r.name}>
-                        <td>{i + 1}</td>
-                        <th>{r.name}</th>
-                        <td>{r.games}</td>
-                        <td>{r.wins}</td>
-                        <td>{r.winRate}%</td>
-                        <td>{r.averagePoints}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {!leaderboard.rows.length && (
-                  <p className="ct-empty">
-                    The first names on this board could be yours. Complete a game and create a
-                    profile.
-                  </p>
-                )}
-              </div>
-              <p className="ct-muted">
-                Guests are counted in results and opponents’ statistics. Their table names never
-                appear on the public leaderboard.
-              </p>
-            </>
+                  ))}
+                </tbody>
+              </table>
+              {!leaderboard.rows.length && <p className="ct-empty">No completed games yet.</p>}
+            </div>
           ) : (
-            <p>Loading leaderboard…</p>
+            <p className="ct-muted">Loading leaderboard…</p>
           )}
         </section>
       )}
       {tab === 'profile' && (
         <section className="ct-stats-page">
-          <span className="ct-eyebrow">Your time on the island</span>
-          <h1>{user?.registered ? `${user.name}’s playbook.` : 'Every game tells a story.'}</h1>
+          <button className="ct-text-button" onClick={() => openRoom('')}>
+            ← Back to tables
+          </button>
+          <h1>{user?.registered ? `${user.name}’s stats` : 'Your stats'}</h1>
           {!user?.registered ? (
             <div className="ct-panel">
               <p>
@@ -687,34 +961,6 @@ export default function CatanApp({ initialCode = '' }: { initialCode?: string })
           )}
         </section>
       )}
-      <footer className="ct-footer">
-        <span>A little strategy. A lot of company.</span>
-        <details>
-          <summary>Playing together & rules</summary>
-          <p>
-            All devices connect to the same server address. On a local Wi-Fi host, use its network
-            IP rather than localhost. Keep the host running while you play; completed and paused
-            games persist on disk.
-          </p>
-          <p>
-            Resources and development cards are private. Counts, played knights, structures, and win
-            estimates are public at your table. A profile lets you recover your seat on another
-            device. Guests should keep this browser’s cookies to return to their seats.
-          </p>
-          <p>
-            Use the{' '}
-            <a
-              href="https://www.catan.com/understand-catan/game-rules"
-              target="_blank"
-              rel="noreferrer"
-            >
-              official base game rules
-            </a>
-            . The 5–6 player island uses paired turns, with no domestic trading for the paired
-            player. This is an independent implementation with original artwork.
-          </p>
-        </details>
-      </footer>
     </main>
   );
 }

@@ -58,32 +58,42 @@ export function createBoard(extended: boolean, random: Random): Board {
       if (land[id] === 'desert') board.robber = id;
     }
   });
-  const numbers = extended
-    ? [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12]
-    : [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
-  // Place red tokens using randomized independent sets, then fill the other tokens.
-  const productive = board.hexes.filter((h) => h.resource !== 'desert');
-  const reds = numbers.filter((n) => n === 6 || n === 8);
-  let redHexes: number[] = [];
-  for (let attempt = 0; attempt < 1000; attempt++) {
-    redHexes = [];
-    for (const hex of shuffle(productive, random)) {
-      const adjacent = board.edges.some(
-        (e) => e.hexes.includes(hex.id) && e.hexes.some((h) => redHexes.includes(h)),
-      );
-      if (!adjacent) redHexes.push(hex.id);
-      if (redHexes.length === reds.length) break;
-    }
-    if (redHexes.length === reds.length) break;
+  // Official A–R / A–Zc discs: counterclockwise spiral, skipping deserts.
+  const sequence = extended
+    ? [2, 5, 4, 6, 3, 9, 8, 11, 11, 10, 6, 3, 8, 4, 8, 10, 11, 12, 10, 5, 4, 9, 5, 9, 12, 3, 2, 6]
+    : [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11];
+  const neighbors = (id: number) =>
+    board.edges.filter((e) => e.hexes.includes(id)).flatMap((e) => e.hexes.filter((h) => h !== id));
+  const corners = board.hexes.filter((h) => neighbors(h.id).length === 3);
+  const corner = corners[Math.floor(random() * corners.length)];
+  const startAngle = Math.atan2(corner.y, corner.x);
+  const remaining = new Set(board.hexes.map((h) => h.id));
+  const spiral: number[] = [];
+  while (remaining.size) {
+    const ring = [...remaining].filter(
+      (id) => neighbors(id).filter((n) => remaining.has(n)).length < 6,
+    );
+    const angle = (id: number) =>
+      (startAngle - Math.atan2(board.hexes[id].y, board.hexes[id].x) + Math.PI * 4) % (Math.PI * 2);
+    ring.sort((a, b) => angle(a) - angle(b));
+    const closest = ring.reduce((best, id) => {
+      const distance = (n: number) =>
+        Math.abs(
+          Math.atan2(
+            Math.sin(startAngle - Math.atan2(board.hexes[n].y, board.hexes[n].x)),
+            Math.cos(startAngle - Math.atan2(board.hexes[n].y, board.hexes[n].x)),
+          ),
+        );
+      return distance(id) < distance(best) ? id : best;
+    }, ring[0]);
+    const offset = ring.indexOf(closest);
+    spiral.push(...ring.slice(offset), ...ring.slice(0, offset));
+    ring.forEach((id) => remaining.delete(id));
   }
-  if (redHexes.length !== reds.length) throw new Error('Unable to generate number tokens');
-  const rest = shuffle(
-    numbers.filter((n) => n !== 6 && n !== 8),
-    random,
-  );
-  const redNumbers = shuffle(reds, random);
-  for (const hex of productive)
-    hex.number = redHexes.includes(hex.id) ? redNumbers.pop()! : rest.pop()!;
+  board.tokenOrder = spiral.filter((id) => board.hexes[id].resource !== 'desert');
+  board.tokenOrder.forEach((id, i) => {
+    board.hexes[id].number = sequence[i];
+  });
   const coast = board.edges
     .filter((e) => e.hexes.length === 1)
     .sort((a, b) => {
@@ -105,8 +115,10 @@ export function createBoard(extended: boolean, random: Random): Board {
     ],
     random,
   );
+  board.ports = [];
   ports.forEach((port, i) => {
     const edge = coast[Math.floor((i * coast.length) / ports.length)];
+    board.ports!.push({ edge: edge.id, resource: port });
     board.vertices[edge.a].port = port;
     board.vertices[edge.b].port = port;
   });

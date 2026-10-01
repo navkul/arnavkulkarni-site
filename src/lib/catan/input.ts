@@ -32,7 +32,7 @@ export function parseAction(input: unknown): Action {
       valid = resource(a.give) && resource(a.receive);
       break;
     case 'offer':
-      valid = integer(a.to) && validCards(a.give) && validCards(a.receive);
+      valid = (a.to === 'all' || integer(a.to)) && validCards(a.give) && validCards(a.receive);
       break;
     case 'accept-trade':
       valid = integer(a.offer);

@@ -1,8 +1,13 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { DevelopmentArt } from './art';
+import { TableDice, AwardFlight, useTableClock } from './table-motion';
+import { CardStack, ResourceCard, PieceArt, VictoryPoints, PlayedCard, AwardCard } from './cards';
+import { COSTS, canAfford } from '@/lib/catan/engine';
 import Board, { PLAYER_COLORS } from './board';
 import {
   RESOURCES,
+  DEVELOPMENT_NAMES,
   cardCount,
   emptyCards,
   type Action,
@@ -92,7 +97,7 @@ function OddsPanel({ room, history }: { room: RoomView; history: Odds[] }) {
             key={i}
             style={{
               width: `${odds?.probabilities[i] ?? 100 / players.length}%`,
-              background: PLAYER_COLORS[i],
+              background: PLAYER_COLORS[p.color],
             }}
             title={`${p.name}: ${odds?.probabilities[i] ?? '…'}%`}
           />
@@ -101,7 +106,7 @@ function OddsPanel({ room, history }: { room: RoomView; history: Odds[] }) {
       {players.map((p, i) => (
         <div className="ct-odds-row" key={i}>
           <span>
-            <i style={{ background: PLAYER_COLORS[i] }} />
+            <i style={{ background: PLAYER_COLORS[p.color] }} />
             {p.name}
           </span>
           <strong>{odds ? `${odds.probabilities[i].toFixed(1)}%` : '…'}</strong>
@@ -127,7 +132,7 @@ function OddsPanel({ room, history }: { room: RoomView; history: Odds[] }) {
                 )
                 .join(' ')}
               fill="none"
-              stroke={PLAYER_COLORS[p]}
+              stroke={PLAYER_COLORS[players[p].color]}
               strokeWidth="2"
             />
           ))}
@@ -166,6 +171,21 @@ export default function GameTable({
   const game = room.game!,
     legal = room.legal!,
     me = room.me;
+  const now = useTableClock(
+    room.serverNow,
+    Math.max(
+      (room.opening?.revealAt ?? 0) + 5500,
+      (room.diceEvent?.at ?? 0) + 6500,
+      ...room.awardEvents.map((e) => e.at + 2600),
+    ),
+  );
+  const opening = room.opening;
+  const starting = room.status === 'starting';
+  const waitingOpening = !!opening && now < opening.readyAt;
+  const nextRoller = opening?.contenders.find(
+    (id) => !opening.rolls.some((r) => r.round === opening.round && r.playerId === id),
+  );
+  const canRollOrder = starting && !waitingOpening && nextRoller === game.players[me].id;
   const [mode, setMode] = useState<'settlement' | 'road' | 'city' | 'free-roads'>(
     game.phase === 'setup-road' ? 'road' : 'settlement',
   );
@@ -177,11 +197,24 @@ export default function GameTable({
     [receive, setReceive] = useState<Resource>('ore');
   const [tradeGive, setTradeGive] = useState(emptyCards()),
     [tradeReceive, setTradeReceive] = useState(emptyCards());
-  const [tradeTo, setTradeTo] = useState((me + 1) % game.players.length);
+  const [tradeTo, setTradeTo] = useState<number | 'all'>('all');
+  const [purchaseNotice, setPurchaseNotice] = useState('');
+  const endDialog = useRef<HTMLDialogElement>(null);
   const [development, setDevelopment] = useState('knight');
   const [resourceOne, setResourceOne] = useState<Resource>('wheat'),
     [resourceTwo, setResourceTwo] = useState<Resource>('ore');
-  const isActive = game.active === me && room.status === 'playing';
+  // Reset move drafts when the authoritative revision changes, while keeping the
+  // board, dice and open card history mounted across moves and polling updates.
+  const [seenRevision, setSeenRevision] = useState(room.revision);
+  if (seenRevision !== room.revision) {
+    setSeenRevision(room.revision);
+    setMode(game.phase === 'setup-road' ? 'road' : 'settlement');
+    setFreeEdges([]);
+    setRobberHex(undefined);
+    setVictim(undefined);
+    setDiscard(emptyCards());
+  }
+  const isActive = game.active === me && room.status === 'playing' && !waitingOpening;
   const isRobber = isActive && game.phase === 'robber';
   const setup = game.phase.startsWith('setup');
   const hand = game.hand!;
@@ -232,24 +265,31 @@ export default function GameTable({
       : mode === 'free-roads'
         ? freeRoads
         : [];
-  const phaseText =
-    room.status === 'paused'
-      ? 'Game paused. Your island is saved.'
-      : game.phase === 'finished'
-        ? `${game.players[game.winner!].name} wins the island!`
-        : game.phase === 'discard'
-          ? 'A seven! Players with more than 7 cards must discard half.'
-          : isActive
-            ? ({
-                'setup-settlement': 'Place your starting settlement.',
-                'setup-road': 'Connect a road to your new settlement.',
-                roll: 'Your turn. Roll the dice or play a development card.',
-                robber: 'Move the robber to another hex.',
-                trade: game.paired
-                  ? 'Your paired turn: build, play a card, or trade with the bank.'
-                  : 'Your turn to trade and build.',
-              }[game.phase] ?? '')
-            : `Waiting for ${game.players[game.active].name}${game.paired ? ' (paired turn)' : ''}.`;
+  const phaseText = starting
+    ? now < opening!.revealAt
+      ? `Building the island in ${Math.ceil((opening!.revealAt - now) / 1000)}…`
+      : now < room.startedAt! + 8500
+        ? 'Placing the terrain and numbered discs…'
+        : `Round ${opening!.round}: ${game.players.find((p) => p.id === nextRoller)?.name ?? 'Everyone'} rolls for first player.`
+    : room.status === 'ended'
+      ? 'The host ended this game. No win or stats were recorded.'
+      : room.status === 'paused'
+        ? 'Game paused. Your island is saved.'
+        : game.phase === 'finished'
+          ? `${game.players[game.winner!].name} wins the island!`
+          : game.phase === 'discard'
+            ? 'A seven! Players with more than 7 cards must discard half.'
+            : isActive
+              ? ({
+                  'setup-settlement': 'Place your starting settlement.',
+                  'setup-road': 'Connect a road to your new settlement.',
+                  roll: 'Your turn. Roll the dice or play a development card.',
+                  robber: 'Move the robber to another hex.',
+                  trade: game.paired
+                    ? 'Your paired turn: build, play a card, or trade with the bank.'
+                    : 'Your turn to trade and build.',
+                }[game.phase] ?? '')
+              : `Waiting for ${game.players[game.active].name}${game.paired ? ' (paired turn)' : ''}.`;
   async function playDevelopment() {
     if (development === 'knight') await act({ type: 'development', card: 'knight' });
     if (development === 'monopoly')
@@ -279,82 +319,176 @@ export default function GameTable({
               ? 'Founding the island'
               : `Turn ${game.turn}${game.paired ? ' · paired player' : ''}`}
           </span>
-          <h2>{phaseText}</h2>
+          <h2 className="ct-turn-heading">
+            <i style={{ background: PLAYER_COLORS[game.players[game.active].color] }} />
+            {starting
+              ? 'A new island'
+              : room.status === 'ended'
+                ? 'Game ended'
+                : room.status === 'paused'
+                  ? 'Game paused'
+                  : room.status === 'finished'
+                    ? `${game.players[game.winner!].name} wins!`
+                    : `${game.players[game.active].name}’s turn`}
+            {isActive && <span className="ct-your-turn">Your turn</span>}
+          </h2>
+          <p>{phaseText}</p>
         </div>
-        {game.dice && (
-          <div className="ct-dice" aria-label={`Dice: ${game.dice.join(' and ')}`}>
-            <span>{game.dice[0]}</span>
-            <span>{game.dice[1]}</span>
-          </div>
-        )}
+        <div className="ct-action-row ct-top-actions">
+          {canRollOrder && (
+            <button
+              className="ct-primary"
+              disabled={busy}
+              onClick={() => void command('roll-order')}
+            >
+              Roll for first player
+            </button>
+          )}
+          {legal.roll && !waitingOpening && (
+            <button
+              className="ct-primary"
+              disabled={busy}
+              onClick={() => void act({ type: 'roll' })}
+            >
+              Roll dice
+            </button>
+          )}
+          {legal.end && (
+            <button
+              className="ct-primary"
+              disabled={busy}
+              onClick={() => void act({ type: 'end' })}
+            >
+              End turn
+            </button>
+          )}
+          {room.canPause && (
+            <button disabled={busy} onClick={() => void command('pause')}>
+              Pause &amp; save
+            </button>
+          )}
+          {room.canResume && (
+            <button disabled={busy} onClick={() => void command('resume')}>
+              Resume game
+            </button>
+          )}
+          {room.canEnd && (
+            <button disabled={busy} onClick={() => endDialog.current?.showModal()}>
+              End game
+            </button>
+          )}
+        </div>
       </div>
+      {room.pauseRequest && (
+        <div className="ct-pause-request" role="status">
+          <span>
+            {room.pauseRequest.by} wants to pause &amp; save · {room.pauseRequest.votes}/
+            {room.seats.length} agree
+          </span>
+          {!room.pauseRequest.agreed && (
+            <button disabled={busy} onClick={() => void command('approve-pause')}>
+              Agree to pause
+            </button>
+          )}
+          <button disabled={busy} onClick={() => void command('decline-pause')}>
+            Keep playing
+          </button>
+        </div>
+      )}
+      {starting && opening!.rolls.length > 0 && (
+        <div className="ct-opening-scores" aria-label="Opening rolls">
+          {opening!.rolls.map((r, i) => (
+            <span key={i}>
+              {game.players.find((p) => p.id === r.playerId)?.name}: {r.values[0] + r.values[1]}
+              {opening!.round > 1 ? ` (round ${r.round})` : ''}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="ct-players">
         {game.players.map((p, i) => (
           <div
             key={i}
-            className={`ct-player ${i === game.active ? 'ct-current' : ''}`}
-            style={{ borderTopColor: PLAYER_COLORS[i] }}
+            className={`ct-player ${i === game.active && room.status === 'playing' ? 'ct-current' : ''}`}
+            aria-label={`${p.name}${i === game.active && room.status === 'playing' ? ', taking their turn' : ''}`}
+            style={{ borderTopColor: PLAYER_COLORS[p.color] }}
           >
             <strong>
               {p.name}
               {i === me ? ' (you)' : ''}
             </strong>
-            <span>
-              {p.points} points · {p.resourcesCount} resources
-            </span>
-            <small>
-              {p.developmentCount} dev · {p.knights} knights
-              {game.longestRoad === i ? ' · Longest road' : ''}
-              {game.largestArmy === i ? ' · Largest army' : ''}
-            </small>
+            <VictoryPoints points={p.points} />
+            <div className="ct-player-cards">
+              <CardStack count={p.resourcesCount} resource="back" label="resource cards" small />
+              <CardStack
+                count={p.developmentCount}
+                development="back"
+                label="development cards"
+                small
+              />
+            </div>
+            <div className="ct-played-images">
+              {p.playedDevelopment.map((card, index) => (
+                <PlayedCard key={index} kind={card.kind} />
+              ))}
+              {(['longestRoad', 'largestArmy'] as const).map((kind) => (
+                <span
+                  key={kind}
+                  data-award-player={`${p.id}-${kind}`}
+                  className="ct-award-destination"
+                >
+                  {game[kind] === i && (
+                    <span
+                      style={{
+                        visibility: room.awardEvents.some(
+                          (e) => e.kind === kind && e.playerId === p.id && now < e.at + 2600,
+                        )
+                          ? 'hidden'
+                          : 'visible',
+                      }}
+                    >
+                      <AwardCard kind={kind} small />
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
           </div>
         ))}
       </div>
       <div className="ct-game-layout">
         <div>
-          <Board
-            board={game.board}
-            vertices={selectableVertices}
-            edges={selectableEdges}
-            robber={isRobber && !busy}
-            selectedEdges={freeEdges}
-            onVertex={(vertex) =>
-              void act({ type: mode === 'city' ? 'city' : 'settlement', vertex })
-            }
-            onEdge={(edge) =>
-              mode === 'free-roads'
-                ? setFreeEdges([...freeEdges, edge])
-                : void act({ type: 'road', edge })
-            }
-            onHex={(hex) => {
-              setRobberHex(hex);
-              const victim = game.board.hexes[hex].vertices
-                .map((v) => game.board.vertices[v].building?.player)
-                .find((p) => p !== undefined && p !== me && game.players[p].resourcesCount > 0);
-              setVictim(victim);
-            }}
-          />
+          <div className="ct-island-stage">
+            <TableDice room={room} now={now} />
+            <Board
+              colors={game.players.map((p) => p.color)}
+              revealAt={opening?.revealAt}
+              now={now}
+              board={game.board}
+              reveal={game.phase.startsWith('setup') && game.log.length <= 1}
+              vertices={selectableVertices}
+              edges={selectableEdges}
+              robber={isRobber && !busy}
+              selectedEdges={freeEdges}
+              onVertex={(vertex) =>
+                void act({ type: mode === 'city' ? 'city' : 'settlement', vertex })
+              }
+              onEdge={(edge) =>
+                mode === 'free-roads'
+                  ? setFreeEdges([...freeEdges, edge])
+                  : void act({ type: 'road', edge })
+              }
+              onHex={(hex) => {
+                setRobberHex(hex);
+                const victim = game.board.hexes[hex].vertices
+                  .map((v) => game.board.vertices[v].building?.player)
+                  .find((p) => p !== undefined && p !== me && game.players[p].resourcesCount > 0);
+                setVictim(victim);
+              }}
+            />
+          </div>
           {(isActive || game.discard[me] > 0 || game.offer) && (
             <fieldset disabled={busy || room.status !== 'playing'} className="ct-panel ct-controls">
-              {isActive && (
-                <div className="ct-action-row">
-                  {legal.roll && (
-                    <button className="ct-primary" onClick={() => void act({ type: 'roll' })}>
-                      Roll dice
-                    </button>
-                  )}
-                  {legal.end && (
-                    <button className="ct-primary" onClick={() => void act({ type: 'end' })}>
-                      End turn
-                    </button>
-                  )}
-                  {legal.buyDevelopment && (
-                    <button onClick={() => void act({ type: 'buy-development' })}>
-                      Buy development · 1 sheep, wheat, ore
-                    </button>
-                  )}
-                </div>
-              )}
               {isActive && (setup || game.phase === 'trade') && (
                 <>
                   <div className="ct-action-row">
@@ -510,7 +644,7 @@ export default function GameTable({
               )}
               {legal.development.length > 0 && (
                 <details>
-                  <summary>Play a development card</summary>
+                  <summary id="ct-play-development">Play a development card</summary>
                   <div className="ct-inline-form">
                     <label>
                       Card
@@ -529,11 +663,7 @@ export default function GameTable({
                         </option>
                         {legal.development.map((c) => (
                           <option key={c} value={c}>
-                            {c === 'roads'
-                              ? 'Road building'
-                              : c === 'plenty'
-                                ? 'Year of plenty'
-                                : c}
+                            {DEVELOPMENT_NAMES[c]}
                           </option>
                         ))}
                       </select>
@@ -590,10 +720,16 @@ export default function GameTable({
               )}
               {legal.end && !game.paired && (
                 <details>
-                  <summary>Offer a trade to another player</summary>
+                  <summary>Offer a trade</summary>
                   <label>
                     Trade with
-                    <select value={tradeTo} onChange={(e) => setTradeTo(Number(e.target.value))}>
+                    <select
+                      value={tradeTo}
+                      onChange={(e) =>
+                        setTradeTo(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                      }
+                    >
+                      <option value="all">Whole table</option>
                       {game.players.map(
                         (p, i) =>
                           i !== me && (
@@ -635,11 +771,16 @@ export default function GameTable({
                     {game.players[game.offer.from].name} offers {cardText(game.offer.give)}
                   </strong>
                   <p>
-                    For {cardText(game.offer.receive)} from {game.players[game.offer.to].name}.
+                    For {cardText(game.offer.receive)} from{' '}
+                    {game.offer.to === 'all'
+                      ? 'anyone at the table. First to accept gets the trade'
+                      : game.players[game.offer.to].name}
+                    .
                   </p>
-                  {game.offer.to === me && (
+                  {game.offer.from !== me && (game.offer.to === me || game.offer.to === 'all') && (
                     <button
                       className="ct-primary"
+                      disabled={RESOURCES.some((r) => hand.resources[r] < game.offer!.receive[r])}
                       onClick={() => void act({ type: 'accept-trade', offer: game.offer!.id })}
                     >
                       Accept trade
@@ -652,75 +793,189 @@ export default function GameTable({
               )}
             </fieldset>
           )}
-          <section className="ct-panel">
-            <h2>
-              Your hand <span className="ct-tag">Only you can see this</span>
-            </h2>
-            <div className="ct-hand">
+          <section className="ct-hand-panel" aria-label="Your private hand">
+            <div className="ct-card-hand">
               {RESOURCES.map((r) => (
-                <div key={r} className={`ct-resource ct-${r}`}>
-                  <strong>{hand.resources[r]}</strong>
-                  <span>{r}</span>
-                </div>
+                <CardStack key={r} count={hand.resources[r]} resource={r} label={r} />
+              ))}
+              {hand.development.map((card, index) => (
+                <button
+                  className="ct-hand-development"
+                  key={`${index}-${card.kind}`}
+                  title={`${DEVELOPMENT_NAMES[card.kind]}${card.boughtTurn === game.turn ? ' · playable next turn' : ''}`}
+                  aria-label={DEVELOPMENT_NAMES[card.kind]}
+                  onClick={() => {
+                    setDevelopment(card.kind);
+                    if (!legal.development.includes(card.kind))
+                      setPurchaseNotice(
+                        card.kind === 'victory'
+                          ? 'This card adds one hidden victory point.'
+                          : 'This card is not playable yet.',
+                      );
+                    else {
+                      const details = document
+                        .getElementById('ct-play-development')
+                        ?.closest('details');
+                      if (details) details.open = true;
+                      document
+                        .getElementById('ct-play-development')
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                  }}
+                >
+                  <DevelopmentArt kind={card.kind} />
+                </button>
               ))}
             </div>
-            <p className="ct-muted">
-              Development cards:{' '}
-              {hand.development.length
-                ? hand.development
-                    .map(
-                      (c) =>
-                        `${c.kind === 'victory' ? 'Victory point' : c.kind}${c.boughtTurn === game.turn && c.kind !== 'victory' ? ' (next turn)' : ''}`,
-                    )
-                    .join(' · ')
-                : 'None yet'}
-            </p>
           </section>
         </div>
         <aside>
-          <OddsPanel room={room} history={history} />
-          <section className="ct-panel">
-            <h2>At the table</h2>
-            <p className="ct-muted">
-              First to 10 points on their turn wins. Longest road (5+) and largest army (3+) are
-              worth 2 points each.
-            </p>
-            <div className="ct-action-row">
-              {room.canPause && (
-                <button disabled={busy} onClick={() => void command('pause')}>
-                  Pause & save
-                </button>
-              )}
-              {room.canResume && (
+          <section className="ct-panel ct-supplies" aria-label="Supplies and purchases">
+            {purchaseNotice && (
+              <p className="ct-purchase-notice" role="status">
+                {purchaseNotice}
+              </p>
+            )}
+            {(['development', 'road', 'settlement', 'city'] as const).map((kind) => {
+              const stock =
+                kind === 'development'
+                  ? game.deckCount
+                  : kind === 'road'
+                    ? 15 - game.board.edges.filter((e) => e.player === me).length
+                    : (kind === 'city' ? 4 : 5) -
+                      game.board.vertices.filter(
+                        (v) => v.building?.player === me && v.building.kind === kind,
+                      ).length;
+              return (
                 <button
-                  disabled={busy}
-                  className="ct-primary"
-                  onClick={() => void command('resume')}
+                  className="ct-purchase"
+                  key={kind}
+                  aria-label={kind === 'development' ? 'Draw development card' : `Buy ${kind}`}
+                  disabled={busy || ['paused', 'finished', 'ended'].includes(room.status)}
+                  onClick={() => {
+                    if (!canAfford(hand.resources, COSTS[kind])) {
+                      setPurchaseNotice('You do not have enough resources for this.');
+                      return;
+                    }
+                    if (!stock) {
+                      setPurchaseNotice(
+                        kind === 'development'
+                          ? 'The development deck is empty.'
+                          : `You have no ${kind} pieces left.`,
+                      );
+                      return;
+                    }
+                    if (!isActive || game.phase !== 'trade') {
+                      setPurchaseNotice('Make purchases during your trade and build phase.');
+                      return;
+                    }
+                    if (kind === 'development') {
+                      setPurchaseNotice('');
+                      void act({ type: 'buy-development' });
+                      return;
+                    }
+                    const sites =
+                      kind === 'road'
+                        ? legal.roads
+                        : kind === 'city'
+                          ? legal.cities
+                          : legal.settlements;
+                    if (!sites.length) {
+                      setPurchaseNotice('There is no legal location for this piece yet.');
+                      return;
+                    }
+                    setMode(kind);
+                    setFreeEdges([]);
+                    setPurchaseNotice('Choose a highlighted location on the island.');
+                  }}
                 >
-                  Resume game
+                  <span className="ct-purchase-picture">
+                    {kind === 'development' ? (
+                      <CardStack
+                        showEmpty
+                        count={stock}
+                        development="back"
+                        label="development cards left"
+                        small
+                      />
+                    ) : (
+                      <PieceArt kind={kind} color={PLAYER_COLORS[game.players[me].color]} />
+                    )}
+                  </span>
+                  <span className="ct-purchase-info">
+                    <strong>
+                      {kind === 'development'
+                        ? 'Development'
+                        : kind[0].toUpperCase() + kind.slice(1)}
+                    </strong>
+                    <small>{stock} left</small>
+                    <span className="ct-cost-cards" aria-label={cardText(COSTS[kind])}>
+                      {RESOURCES.filter((r) => COSTS[kind][r]).map((r) => (
+                        <span key={r}>
+                          <ResourceCard kind={r} />
+                          <b>{COSTS[kind][r]}</b>
+                        </span>
+                      ))}
+                    </span>
+                  </span>
                 </button>
-              )}
+              );
+            })}
+            <div className="ct-bank" aria-label="Resources remaining in the bank">
+              {RESOURCES.map((r) => (
+                <CardStack
+                  key={r}
+                  showEmpty
+                  count={game.bank[r]}
+                  resource={r}
+                  label={`${r} left in bank`}
+                  small
+                />
+              ))}
             </div>
-            <details>
-              <summary>Bank supply · {game.deckCount} development cards</summary>
-              <p>{cardText(game.bank)}</p>
-            </details>
-            <details>
-              <summary>Recent moves</summary>
-              <ol className="ct-log">
-                {game.log
-                  .slice(-20)
-                  .reverse()
-                  .map((entry, i) => (
-                    <li key={i}>
-                      <small>Turn {entry.turn}</small> {entry.text}
-                    </li>
-                  ))}
-              </ol>
-            </details>
+            <div className="ct-award-supply">
+              {(['longestRoad', 'largestArmy'] as const).map((kind) => (
+                <span key={kind} data-award-source={kind}>
+                  {game[kind] === undefined && <AwardCard kind={kind} />}
+                </span>
+              ))}
+            </div>
           </section>
+          {room.winProbability && room.status !== 'ended' && (
+            <OddsPanel room={room} history={history} />
+          )}
         </aside>
       </div>
+      {room.awardEvents.map((event) => (
+        <AwardFlight key={event.id} event={event} now={now} />
+      ))}
+      <dialog
+        ref={endDialog}
+        className="ct-end-dialog"
+        aria-labelledby="ct-end-title"
+        aria-describedby="ct-end-description"
+      >
+        <h2 id="ct-end-title">End this game?</h2>
+        <p id="ct-end-description">
+          This closes the table for everyone. No winner is declared and no player stats change. This
+          cannot be undone.
+        </p>
+        <div className="ct-action-row">
+          <button autoFocus onClick={() => endDialog.current?.close()}>
+            Keep playing
+          </button>
+          <button
+            className="ct-danger"
+            disabled={busy}
+            onClick={async () => {
+              await command('end-game');
+              endDialog.current?.close();
+            }}
+          >
+            End game for everyone
+          </button>
+        </div>
+      </dialog>
     </>
   );
 }

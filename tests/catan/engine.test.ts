@@ -362,3 +362,66 @@ test('resource payload validation rejects negative, fractional, missing and extr
   }
   assert.ok(RESOURCES.every((r) => Number.isInteger(g.bank[r])));
 });
+
+test('table-wide offers are claimed once by any other eligible player and stay atomic', () => {
+  const g = newGame(4);
+  g.phase = 'trade';
+  grant(g, 0, 'wood', 2);
+  grant(g, 1, 'ore', 1);
+  grant(g, 2, 'ore', 1);
+  const offer = applyAction(
+    g,
+    0,
+    {
+      type: 'offer',
+      to: 'all',
+      give: { ...emptyCards(), wood: 1 },
+      receive: { ...emptyCards(), ore: 1 },
+    },
+    seeded(),
+  );
+  const id = offer.offer!.id;
+  assert.throws(
+    () => applyAction(offer, 0, { type: 'accept-trade', offer: id }, seeded()),
+    /no longer/,
+  );
+  assert.throws(() => applyAction(offer, 3, { type: 'accept-trade', offer: id }, seeded()));
+  assert.ok(offer.offer);
+  const claimed = applyAction(offer, 2, { type: 'accept-trade', offer: id }, seeded());
+  assert.equal(claimed.players[2].resources.wood, 1);
+  assert.equal(claimed.players[0].resources.ore, 1);
+  assert.equal(claimed.offer, undefined);
+  assert.throws(
+    () => applyAction(claimed, 1, { type: 'accept-trade', offer: id }, seeded()),
+    /no longer/,
+  );
+  assert.deepEqual(conserve(claimed), conserve(g));
+});
+
+test('successful development plays retain public history without revealing the remaining hand', () => {
+  const g = newGame();
+  g.phase = 'trade';
+  g.turn = 4;
+  g.players[0].development = [
+    { kind: 'plenty', boughtTurn: 1 },
+    { kind: 'victory', boughtTurn: 1 },
+  ];
+  const played = applyAction(
+    g,
+    0,
+    { type: 'development', card: 'plenty', resources: ['ore', 'wheat'] },
+    seeded(),
+  );
+  assert.deepEqual(played.players[0].playedDevelopment, [{ kind: 'plenty', turn: 4 }]);
+  assert.equal(played.players[0].development[0].kind, 'victory');
+  assert.deepEqual(g.players[0].playedDevelopment, []);
+  assert.throws(() =>
+    applyAction(
+      played,
+      0,
+      { type: 'development', card: 'plenty', resources: ['ore', 'wheat'] },
+      seeded(),
+    ),
+  );
+  assert.equal(played.players[0].playedDevelopment?.length, 1);
+});

@@ -6,7 +6,7 @@ import { emptyCards } from '../../src/lib/catan/types.ts';
 import { parseAction } from '../../src/lib/catan/input.ts';
 import { evaluate, policy, seededRandom } from '../../src/lib/catan/simulation.ts';
 import { applyAction, score } from '../../src/lib/catan/engine.ts';
-import { conserve, setup } from './helpers.ts';
+import { conserve, setup, finishOpening, agreePause } from './helpers.ts';
 
 const testUrl = process.env.CATAN_TEST_DATABASE_URL;
 if (!testUrl || !new URL(testUrl).pathname.endsWith('/catan_test'))
@@ -27,6 +27,7 @@ async function lobby(store: CatanStore, n = 3) {
   return { room, sessions };
 }
 async function completeFixture(store: CatanStore, room: Room, identity: Identity) {
+  if (room.status === 'starting') room = await finishOpening(store, room);
   // Put a real room one legal city purchase from victory; the service must record it.
   const g = room.game!;
   const player = g.players.findIndex(
@@ -69,14 +70,14 @@ test('lobby membership, capacity, host permission, revision checks and departure
     const left = (await s.change(sessions[0].identity, room.code, room.revision, 'leave'))!;
     assert.equal(left.host, left.seats[0].id);
     const started = (await s.change(sessions[1].identity, room.code, left.revision, 'start'))!;
-    assert.equal(started.status, 'playing');
+    assert.equal(started.status, 'starting');
     await assert.rejects(
       async () => await s.change(sessions[1].identity, room.code, started.revision, 'leave'),
       /before/,
     );
     await assert.rejects(
       async () => await s.change(sessions[1].identity, room.code, started.revision, 'pause'),
-      /profile/,
+      /cannot be requested/,
     );
   } finally {
     await s.close();
@@ -191,7 +192,9 @@ test('Postgres survives independent connections, profile login restores paused g
     room = await s.join(sessions[1].identity, room.code, 'Guest one');
     room = await s.join(sessions[2].identity, room.code, 'Guest two');
     room = (await s.change(host, room.code, room.revision, 'start'))!;
+    room = await finishOpening(s, room);
     room = (await s.change(host, room.code, room.revision, 'pause'))!;
+    room = await agreePause(s, room);
     const code = room.code,
       snapshot = JSON.stringify(room.game);
     await assert.rejects(
@@ -284,7 +287,8 @@ test('independent servers cannot overfill rooms or commit the same revision twic
     assert.equal(starts.filter((r) => r.status === 'fulfilled').length, 1);
     const started = await first.room(room.code);
     assert.equal(started.revision, filled.revision + 1);
-    assert.ok(await second.job(room.code, started.revision));
+    assert.equal(await second.job(room.code, started.revision), undefined);
+    assert.equal(started.status, 'starting');
     const rates = await Promise.allSettled([
       first.rateLimit('race', 1),
       second.rateLimit('race', 1),
@@ -300,7 +304,10 @@ test('durable snapshots survive reconnect, publish retries and out-of-order dupl
   let store = await freshStore();
   try {
     const { room, sessions } = await lobby(store);
-    const started = (await store.change(sessions[0].identity, room.code, room.revision, 'start'))!;
+    const started = await finishOpening(
+      store,
+      (await store.change(sessions[0].identity, room.code, room.revision, 'start'))!,
+    );
     const firstRevision = started.revision;
     const actor = sessions.find(
       (s) => roomView(started, s.identity).me === started.game!.active,
@@ -336,6 +343,150 @@ test('durable snapshots survive reconnect, publish retries and out-of-order dupl
     assert.deepEqual((await store.room(room.code)).odds, history[1]);
     assert.equal(await store.job(room.code, firstRevision), undefined);
     assert.equal((await store.pendingJobs(room.code)).length, 0);
+  } finally {
+    await store.close();
+  }
+});
+
+test('online tables honor a three-seat limit and disabling estimates creates no jobs', async () => {
+  const store = await freshStore();
+  try {
+    const sessions = await Promise.all(Array.from({ length: 4 }, () => store.session()));
+    let room = await store.createRoom(sessions[0].identity, 'No estimates', 3, 'Host', false);
+    room = await store.join(sessions[1].identity, room.code, 'Guest one');
+    room = await store.join(sessions[2].identity, room.code, 'Guest two');
+    await assert.rejects(store.join(sessions[3].identity, room.code, 'Guest extra'), /full/);
+    room = (await store.change(sessions[0].identity, room.code, room.revision, 'start'))!;
+    assert.equal(roomView(room, sessions[0].identity).winProbability, false);
+    assert.equal((await store.pendingJobs(room.code)).length, 0);
+    const finished = await completeFixture(store, room, sessions[0].identity);
+    assert.equal(finished.status, 'finished');
+    assert.equal((await store.leaderboard()).totals.games, 1);
+    assert.equal((await store.pendingJobs(room.code)).length, 0);
+  } finally {
+    await store.close();
+  }
+});
+
+test('only the host can end early; closed games persist without results, new jobs, or further moves', async () => {
+  const store = await freshStore();
+  try {
+    const { room: lobbyRoom, sessions } = await lobby(store);
+    const host = sessions[0].identity;
+    let room = (await store.change(host, lobbyRoom.code, lobbyRoom.revision, 'start'))!;
+    await assert.rejects(
+      store.change(sessions[1].identity, room.code, room.revision, 'end-game'),
+      /Only the host/,
+    );
+    const jobsBefore = (await store.query('SELECT * FROM jobs WHERE room=?', room.code)).length;
+    room = (await store.change(host, room.code, room.revision, 'end-game'))!;
+    assert.equal(room.status, 'ended');
+    assert.equal(room.game!.winner, undefined);
+    assert.equal(roomView(room, host).canEnd, false);
+    assert.equal(roomView(room, host).legal!.roll, false);
+    assert.equal((await store.room(room.code)).status, 'ended');
+    assert.equal((await store.query('SELECT * FROM results')).length, 0);
+    assert.equal(await store.canRegister(host), false);
+    assert.equal(
+      (await store.query('SELECT * FROM jobs WHERE room=?', room.code)).length,
+      jobsBefore,
+    );
+    await assert.rejects(
+      store.change(host, room.code, room.revision, 'action', { type: 'roll' }),
+      /not active/,
+    );
+    await assert.rejects(store.change(host, room.code, room.revision, 'resume'), /not paused/);
+    await assert.rejects(
+      store.change(host, room.code, room.revision, 'end-game'),
+      /already closed/,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
+test('public card history exposes only played cards and validates table-wide offers', async () => {
+  const store = await freshStore();
+  try {
+    const { room: lobbyRoom, sessions } = await lobby(store);
+    const room = (await store.change(
+      sessions[0].identity,
+      lobbyRoom.code,
+      lobbyRoom.revision,
+      'start',
+    ))!;
+    room.game!.players[0].development = [
+      { kind: 'monopoly', boughtTurn: 1 },
+      { kind: 'victory', boughtTurn: 1 },
+    ];
+    room.game!.players[0].playedDevelopment = [{ kind: 'roads', turn: 2 }];
+    const view = roomView(room, sessions[1].identity);
+    assert.deepEqual(view.game!.players[0].playedDevelopment, [{ kind: 'roads', turn: 2 }]);
+    assert.equal('development' in view.game!.players[0], false);
+    assert.equal('deck' in view.game!, false);
+    assert.equal(
+      parseAction({
+        type: 'offer',
+        to: 'all',
+        give: { ...emptyCards(), wood: 1 },
+        receive: { ...emptyCards(), ore: 1 },
+      }).type,
+      'offer',
+    );
+    assert.throws(
+      () =>
+        parseAction({ type: 'offer', to: 'everyone', give: emptyCards(), receive: emptyCards() }),
+      /Invalid/,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
+test('simultaneous table-offer acceptances transfer cards to exactly one player', async () => {
+  const store = await freshStore();
+  try {
+    const { room: lobbyRoom, sessions } = await lobby(store);
+    const host = sessions[0].identity;
+    let room = (await store.change(host, lobbyRoom.code, lobbyRoom.revision, 'start'))!;
+    room = await finishOpening(store, room);
+    const index = (identity: Identity) =>
+      room.game!.players.findIndex(
+        (p) => p.id === room.seats.find((s) => s.guestId === identity.guestId)!.id,
+      );
+    const hostIndex = index(host),
+      guestIndices = sessions.slice(1).map((s) => index(s.identity));
+    const game = room.game!;
+    game.phase = 'trade';
+    game.active = hostIndex;
+    game.primary = hostIndex;
+    game.players[hostIndex].resources = { ...emptyCards(), wood: 1 };
+    for (const i of guestIndices) game.players[i].resources = { ...emptyCards(), ore: 1 };
+    await store.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), room.code);
+    room = (await store.change(host, room.code, room.revision, 'action', {
+      type: 'offer',
+      to: 'all',
+      give: { ...emptyCards(), wood: 1 },
+      receive: { ...emptyCards(), ore: 1 },
+    }))!;
+    const results = await Promise.allSettled(
+      sessions.slice(1).map((s) =>
+        store.change(s.identity, room.code, room.revision, 'action', {
+          type: 'accept-trade',
+          offer: room.game!.offer!.id,
+        }),
+      ),
+    );
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((r) => r.status === 'rejected').length, 1);
+    const saved = (await store.room(room.code)).game!;
+    assert.equal(saved.offer, undefined);
+    assert.equal(saved.players[hostIndex].resources.wood, 0);
+    assert.equal(saved.players[hostIndex].resources.ore, 1);
+    assert.equal(
+      guestIndices.reduce((n, i) => n + saved.players[i].resources.wood, 0),
+      1,
+    );
   } finally {
     await store.close();
   }

@@ -17,7 +17,9 @@
     "test:e2e:unavailable": "E2E_README_MODE=unavailable playwright test",
     "test:catan": "node --experimental-strip-types --test tests/catan/*.test.ts",
     "test:catan:browser": "playwright test --config playwright.catan.config.ts",
-    "dev:lan": "next dev --hostname 0.0.0.0"
+    "dev:lan": "next dev --hostname 0.0.0.0",
+    "catan:prepare-local": "node scripts/prepare-catan-local.mjs",
+    "catan:local": "node scripts/start-catan-local.mjs"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.22",

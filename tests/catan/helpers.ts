@@ -36,3 +36,44 @@ export function rich(g: Game, player = 0) {
 export function conserve(g: Game) {
   return RESOURCES.map((r) => g.bank[r] + g.players.reduce((n, p) => n + p.resources[r], 0));
 }
+
+/** Advance only the presentation clock in a fixture; every opening roll still uses the service. */
+export async function finishOpening(
+  store: import('../../src/lib/catan/store.ts').CatanStore,
+  room: import('../../src/lib/catan/store.ts').Room,
+) {
+  for (let attempt = 0; room.status === 'starting' && attempt < 100; attempt++) {
+    const opening = room.opening!;
+    opening.readyAt = Date.now() - 1;
+    await store.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), room.code);
+    const next = opening.contenders.find(
+      (id) => !opening.rolls.some((r) => r.round === opening.round && r.playerId === id),
+    )!;
+    const seat = room.seats.find((s) => s.id === next)!;
+    room = (await store.change(
+      { guestId: seat.guestId, profileId: seat.profileId, sessionHash: '' },
+      room.code,
+      room.revision,
+      'roll-order',
+    ))!;
+  }
+  if (room.status !== 'playing') throw new Error('Opening fixture did not complete.');
+  room.opening!.readyAt = Date.now() - 1;
+  await store.query('UPDATE rooms SET state=? WHERE code=?', JSON.stringify(room), room.code);
+  return room;
+}
+export async function agreePause(
+  store: import('../../src/lib/catan/store.ts').CatanStore,
+  room: import('../../src/lib/catan/store.ts').Room,
+) {
+  for (const seat of room.seats) {
+    if (!room.pauseRequest || room.pauseRequest.votes.includes(seat.id)) continue;
+    room = (await store.change(
+      { guestId: seat.guestId, profileId: seat.profileId, sessionHash: '' },
+      room.code,
+      room.revision,
+      'approve-pause',
+    ))!;
+  }
+  return room;
+}

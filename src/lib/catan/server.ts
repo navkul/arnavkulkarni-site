@@ -1,18 +1,56 @@
 import { send } from '@vercel/queue';
-import { CatanStore, type Room } from './store.ts';
+import { resolve } from 'node:path';
+import { CatanStore, ServiceError, type Room } from './store.ts';
 import { evaluate } from './simulation.ts';
 
-const globals = globalThis as typeof globalThis & { catanStore?: CatanStore };
-export function getStore(): CatanStore {
+const globals = globalThis as typeof globalThis & {
+  catanStore?: CatanStore;
+  catanLocalStore?: CatanStore;
+};
+export function localAvailable() {
+  return (
+    !process.env.VERCEL &&
+    (process.env.NODE_ENV === 'development' ||
+      process.env.CATAN_ALLOW_LOCAL_HOST === '1' ||
+      process.env.CATAN_OFFLINE_ONLY === '1')
+  );
+}
+export function offlineOnly() {
+  return localAvailable() && process.env.CATAN_OFFLINE_ONLY === '1';
+}
+export function getStore(
+  hosting: 'server' | 'local' = offlineOnly() ? 'local' : 'server',
+): CatanStore {
+  if (hosting === 'local') {
+    if (!localAvailable())
+      throw new ServiceError('Start the local host on your computer to play offline.', 400);
+    globals.catanLocalStore ??= new CatanStore(
+      resolve(
+        /* turbopackIgnore: true */ process.env.CATAN_LOCAL_DATABASE_PATH ??
+          '.data/catan-local.sqlite',
+      ),
+      'local',
+    );
+    return globals.catanLocalStore;
+  }
+  if (offlineOnly()) throw new ServiceError('This host runs local games only.', 400);
   if (!globals.catanStore) {
     const url = process.env.CATAN_DATABASE_URL;
-    if (!url) throw new Error('Set CATAN_DATABASE_URL to a pooled PostgreSQL connection URL.');
+    if (!url)
+      throw new ServiceError(
+        'Online games are not configured on this host. Choose Self-host for a local game.',
+        503,
+      );
     globals.catanStore = new CatanStore(url);
   }
   return globals.catanStore;
 }
-export async function processEvaluation(code: string, revision: number) {
-  const store = getStore();
+export async function processEvaluation(
+  code: string,
+  revision: number,
+  hosting: 'server' | 'local' = 'server',
+) {
+  const store = getStore(hosting);
   const game = await store.job(code, revision);
   if (!game) return; // Already acknowledged, or no such durable job.
   const configured = Number(process.env.CATAN_SIMULATION_SAMPLES ?? 32);
@@ -22,7 +60,9 @@ export async function processEvaluation(code: string, revision: number) {
 }
 /** Publish persisted outbox entries. Polling repairs failed publication and expired delivery. */
 export async function queueEvaluation(room?: Room): Promise<void> {
-  const store = getStore();
+  if (room?.winProbability === false || room?.status === 'ended' || room?.status === 'starting')
+    return;
+  const store = getStore(room?.hosting ?? 'server');
   const jobs = await store.pendingJobs(room?.code);
   await Promise.all(
     jobs.map(async (job) => {
@@ -34,7 +74,7 @@ export async function queueEvaluation(room?: Room): Promise<void> {
           });
         } else {
           // Local development uses the same durable jobs without needing Vercel credentials.
-          await processEvaluation(job.room, job.revision);
+          await processEvaluation(job.room, job.revision, store.hosting);
         }
       } catch (error) {
         await store.retryJob(job.room, job.revision);
