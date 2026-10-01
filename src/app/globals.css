@@ -148,3 +148,25 @@ a:hover {
   justify-content: space-between;
   margin-top: 0.32rem;
 }
+
+.profile-readme > * + * {
+  margin-top: 1.5rem;
+}
+
+.profile-readme :is(h1, h2, h3, h4, h5, h6) {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.profile-readme :is(ul, ol) {
+  padding-left: 1.5rem;
+  list-style: revert;
+}
+
+.profile-readme img {
+  max-width: 100%;
+}
+
+.profile-readme pre {
+  overflow-x: auto;
+}

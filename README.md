@@ -5,12 +5,11 @@ locked dependencies with `npm ci`.
 
 ## Development and checks
 
-Race maps require a free [CARTO Basemaps API key](https://carto.com/basemaps/apikey/).
-Set `NEXT_PUBLIC_CARTO_BASEMAP_API_KEY` in `.env.local` for local development and
-in the Vercel project's environment variables before building. Next.js embeds
-this browser-visible key at build time, so changing it requires a new deployment.
-Restrict the key to the site's domains and any local or preview hosts you use.
-CARTO and OpenStreetMap attribution must remain visible on both maps.
+The homepage intro renders the public [GitHub profile README](https://github.com/navkul/navkul/blob/main/README.md).
+Next.js checks for updates on visits after a five-minute cache interval, so editing that README
+updates the intro without a site deployment. A failed or empty GitHub response uses the
+three-line fallback in `src/lib/profile-readme.ts`. Remote Markdown is sanitized before rendering.
+The homepage no longer requests Strava data.
 
 ```sh
 nvm use
@@ -37,12 +36,11 @@ On Linux, use `npx playwright install --with-deps chromium` to install the brows
 and its system dependencies.
 
 Tests cover desktop and mobile layouts, published Markdown pages, draft and
-unknown-page 404s, client navigation, running stats, map rendering/zoom, browser
-errors, and the Strava outage fallback. They intercept server-side Strava HTTP
-requests with synthetic data and replace browser map tiles with a local image.
-No Strava credentials or live Strava/tile-CDN access are needed. Google Fonts
-still requires network access during the build. These tests don't verify live
-Strava authentication or the external tile service's availability.
+unknown-page 404s, client navigation, README rendering, navigation, browser
+errors, and the GitHub outage fallback. They intercept server-side README HTTP
+requests with fixture content. No GitHub or Strava credentials are needed. Google Fonts
+still requires network access during the build. These tests don't depend on the live
+GitHub README's content or availability.
 
 The HTTP mock is loaded only by `tests/start-server.mjs`; application code and
 normal `npm run build` deployments never load it. Tests replace the local `.next`
@@ -70,7 +68,7 @@ merges), merge-queue events, and manual dispatches. It exposes two stable checks
 - `quality`: formatting, ESLint with zero warnings, and generated Next.js route
   types plus TypeScript checking.
 - `build-and-smoke`: production builds and Playwright tests for both normal
-  Strava responses and an outage, using desktop and mobile Chromium.
+  README responses and an outage, using desktop and mobile Chromium.
 
 The jobs run independently on Node 22 with `npm ci` and npm download caching.
 They use read-only GitHub permissions and no repository secrets. Action versions
