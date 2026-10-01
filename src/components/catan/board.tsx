@@ -1,317 +1,214 @@
 'use client';
-import { useId, useState } from 'react';
-import { ResourceIcon, PieceArt } from './cards';
-import { TerrainArt, PortArt } from './art';
-import type { Board as BoardState } from '@/lib/catan/types';
-import { PLAYER_COLORS } from '@/lib/catan/types';
+
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { Board as BoardState, VisualEvent } from '@/lib/catan/types';
+import FlatBoard from './board-flat';
+import type { createIsland } from './three-scene';
+import './board-3d.css';
+
 export { PLAYER_COLORS } from '@/lib/catan/types';
-export const RESOURCE_COLORS = {
-  wood: '#487b58',
-  brick: '#b36b4e',
-  sheep: '#9baa62',
-  wheat: '#d6b257',
-  ore: '#87949b',
-  desert: '#ddc8a0',
-};
-export default function Board({
-  board,
-  vertices,
-  edges,
-  robber,
-  onVertex,
-  onEdge,
-  onHex,
-  selectedEdges = [],
-  reveal = false,
-  colors = [0, 1, 2, 3, 4, 5],
-  revealAt,
-  now = 0,
-}: {
+export { RESOURCE_COLORS } from './board-flat';
+export interface BoardProps {
   board: BoardState;
+  overlayControls?: ReactNode;
   vertices: number[];
   edges: number[];
   robber: boolean;
   onVertex: (id: number) => void;
   onEdge: (id: number) => void;
   onHex: (id: number) => void;
+  visualEvents?: VisualEvent[];
   selectedEdges?: number[];
+  selectedHex?: number;
+  activeColor?: number;
   reveal?: boolean;
   colors?: number[];
   revealAt?: number;
   now?: number;
-}) {
-  const artworkId = useId();
-  const [zoom, setZoom] = useState(false);
-  const extentX = Math.max(...board.vertices.map((v) => Math.abs(v.x))) * 60 + 125;
-  const extentY = Math.max(...board.vertices.map((v) => Math.abs(v.y))) * 60 + 125;
-  const key = (event: React.KeyboardEvent, fn: () => void) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      fn();
-    }
-  };
+  production?: { id: string; at: number; total: number };
+  diceEvent?: { id: string; at: number; values: [number, number]; color: number };
+}
+
+export default function Board(props: BoardProps) {
+  const host = useRef<HTMLDivElement>(null);
+  const scene = useRef<ReturnType<typeof createIsland> | null>(null);
+  const latest = useRef(props);
+  const [mode, setMode] = useState<'loading' | 'three' | 'flat'>('loading');
+  const [flat, setFlat] = useState(false);
+  useEffect(() => {
+    latest.current = props;
+    scene.current?.update(props);
+  }, [props]);
+  useEffect(() => {
+    if (flat) return;
+    let canceled = false;
+    import('./three-scene')
+      .then(({ createIsland }) => {
+        if (canceled || !host.current) return;
+        try {
+          scene.current = createIsland(host.current, latest.current, () => {
+            setMode('flat');
+            setFlat(true);
+          });
+          setMode('three');
+        } catch {
+          setMode('flat');
+          setFlat(true);
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setMode('flat');
+          setFlat(true);
+        }
+      });
+    return () => {
+      canceled = true;
+      scene.current?.dispose();
+      scene.current = null;
+    };
+  }, [flat]);
+
+  const useFlat = flat || mode === 'flat';
+  const hover = (kind: 'vertex' | 'edge' | 'hex', id: number) => scene.current?.hover({ kind, id });
   return (
-    <div
-      className={`ct-board-shell ${revealAt ? 'ct-board-opening' : reveal ? 'ct-board-reveal' : ''}`}
+    <section
+      className={`ct3d-board ${useFlat ? 'ct3d-flat' : ''}`}
+      aria-label={useFlat ? undefined : 'Catan island board'}
+      data-renderer={useFlat ? 'svg' : mode}
     >
-      <div className="ct-board-toolbar">
-        <span>
-          {revealAt && now < revealAt
-            ? 'Preparing your island…'
-            : revealAt && now < revealAt + 5500
-              ? 'Building your island…'
-              : 'Tap a highlighted spot to play'}
-        </span>
-        <button onClick={() => setZoom(!zoom)} aria-pressed={zoom}>
-          {zoom ? 'Fit island' : 'Zoom in'}
-        </button>
-      </div>
-      <div className="ct-board-scroll">
-        <svg
-          className="ct-board"
-          style={{ minWidth: zoom ? 850 : undefined }}
-          viewBox={`${-extentX} ${-extentY} ${extentX * 2} ${extentY * 2}`}
-          aria-label="Catan island board"
-        >
-          <defs>
-            {Object.keys(RESOURCE_COLORS).map((resource) => (
-              <symbol key={resource} id={`${artworkId}-${resource}`} viewBox="-60 -60 120 120">
-                <TerrainArt kind={resource as keyof typeof RESOURCE_COLORS} />
-              </symbol>
-            ))}
-            {board.hexes.map((h) => (
-              <clipPath key={h.id} id={`${artworkId}-clip-${h.id}`}>
-                <polygon
-                  points={h.vertices
-                    .map((id) => `${board.vertices[id].x * 60},${board.vertices[id].y * 60}`)
-                    .join(' ')}
-                />
-              </clipPath>
-            ))}
-            <filter id="tile-shadow">
-              <feDropShadow dx="0" dy="3" stdDeviation="3" floodOpacity=".12" />
-            </filter>
-          </defs>
-          {board.hexes.map((h) => (
-            <g
-              key={h.id}
-              role={robber && h.id !== board.robber ? 'button' : undefined}
-              tabIndex={robber && h.id !== board.robber ? 0 : undefined}
-              aria-label={`Hex ${h.id + 1}: ${h.resource}, ${h.number || 'no production'}${h.id === board.robber ? ', robber' : ''}`}
-              className={`ct-tile ${robber && h.id !== board.robber ? 'ct-hex-target' : ''}`}
-              style={
-                {
-                  '--tile-delay': `${(revealAt ?? now) - now + h.id * 45}ms`,
-                  '--face-delay': `${(revealAt ?? now) - now + 1700 + h.id * 35}ms`,
-                  '--number-delay': `${(revealAt ?? now) - now + 3500 + (board.tokenOrder?.indexOf(h.id) ?? h.id) * 40}ms`,
-                  animationDelay: `${((h.id * 7) % board.hexes.length) * 24}ms`,
-                } as React.CSSProperties
-              }
-              onClick={() => robber && h.id !== board.robber && onHex(h.id)}
-              onKeyDown={(e) => key(e, () => robber && h.id !== board.robber && onHex(h.id))}
-            >
-              <polygon
-                points={h.vertices
-                  .map((id) => `${board.vertices[id].x * 60},${board.vertices[id].y * 60}`)
-                  .join(' ')}
-                fill={RESOURCE_COLORS[h.resource]}
-                stroke="#f5e5bd"
-                strokeWidth="3"
-                filter="url(#tile-shadow)"
-              />
-              <g className="ct-terrain-face" clipPath={`url(#${artworkId}-clip-${h.id})`}>
-                <use
-                  href={`#${artworkId}-${h.resource}`}
-                  x={h.x * 60 - 61}
-                  y={h.y * 60 - 61}
-                  width="122"
-                  height="122"
-                />
-              </g>
-              <polygon
-                points={h.vertices
-                  .map((id) => `${board.vertices[id].x * 60},${board.vertices[id].y * 60}`)
-                  .join(' ')}
-                fill="none"
-                stroke="#f6e3ba"
-                strokeWidth="2.5"
-              />
-              {h.number > 0 && (
-                <g className="ct-number-token">
-                  <circle cx={h.x * 60} cy={h.y * 60 + 4} r="21" fill="#263e37" opacity=".18" />
-                  <circle
-                    cx={h.x * 60}
-                    cy={h.y * 60}
-                    r="21"
-                    fill="#fff6de"
-                    stroke="#cfb983"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={h.x * 60}
-                    y={h.y * 60 + 3}
-                    textAnchor="middle"
-                    fill={[6, 8].includes(h.number) ? '#a93625' : '#353d36'}
-                    fontSize="19"
-                    fontWeight="700"
-                  >
-                    {h.number}
-                  </text>
-                  <text
-                    x={h.x * 60}
-                    y={h.y * 60 + 15}
-                    textAnchor="middle"
-                    fill={[6, 8].includes(h.number) ? '#a93625' : '#806d44'}
-                    fontSize="8"
-                  >
-                    {'•'.repeat(6 - Math.abs(7 - h.number))}
-                  </text>
-                </g>
-              )}
-              {board.robber === h.id && (
-                <g aria-label="Robber">
-                  <circle cx={h.x * 60 + 24} cy={h.y * 60 - 11} r="7" fill="#263a36" />
-                  <path
-                    d={`M${h.x * 60 + 19},${h.y * 60 - 5} l-5,18 h20 l-5,-18 Z`}
-                    fill="#263a36"
-                    stroke="#fdf4d9"
-                    strokeWidth="1.5"
-                  />
-                </g>
-              )}
-            </g>
-          ))}
-          {board.edges
-            .filter((e) =>
-              board.ports
-                ? board.ports.some((p) => p.edge === e.id)
-                : e.hexes.length === 1 &&
-                  board.vertices[e.a].port !== undefined &&
-                  board.vertices[e.a].port === board.vertices[e.b].port,
-            )
-            .map((e) => {
-              const a = board.vertices[e.a],
-                b = board.vertices[e.b],
-                x = (a.x + b.x) * 30,
-                y = (a.y + b.y) * 30;
-              const norm = Math.hypot(x, y),
-                px = x + (x / norm) * 65,
-                py = y + (y / norm) * 65;
-              return (
-                <g
-                  key={`port-${e.id}`}
-                  aria-label={`${a.port === 'any' ? '3:1 any' : `2:1 ${a.port}`} port`}
-                >
-                  <path
-                    d={`M${a.x * 60},${a.y * 60} L${px},${py} L${b.x * 60},${b.y * 60}`}
-                    fill="none"
-                    stroke="#cfb080"
-                    strokeWidth="4"
-                  />
-                  <g transform={`translate(${px} ${py - 7})`}>
-                    <PortArt />
-                  </g>
-                  <rect x={px - 29} y={py + 17} width="58" height="23" rx="5" fill="#f4edd4" />
-                  <g transform={`translate(${px + 13} ${py + 28}) scale(.42)`}>
-                    <ResourceIcon kind={a.port!} />
-                  </g>
-                  <text x={px - 10} y={py + 32} textAnchor="middle" fontSize="10" fill="#234d51">
-                    {a.port === 'any' ? '3:1' : '2:1'}
-                  </text>
-                </g>
-              );
-            })}
-          {board.edges.map((e) => {
-            const a = board.vertices[e.a],
-              b = board.vertices[e.b],
-              legal = edges.includes(e.id),
-              selected = selectedEdges.includes(e.id);
-            return (
-              <g
-                key={e.id}
-                role={legal ? 'button' : undefined}
-                tabIndex={legal ? 0 : undefined}
-                aria-label={`Build road ${e.id + 1}`}
-                className={legal ? 'ct-edge-target' : ''}
-                onClick={() => legal && onEdge(e.id)}
-                onKeyDown={(event) => key(event, () => legal && onEdge(e.id))}
+      {useFlat ? (
+        <FlatBoard {...props} />
+      ) : (
+        <>
+          <div className="ct3d-viewport" ref={host}>
+            <div className="ct3d-controls" aria-label="Map controls">
+              <button
+                aria-label="Zoom out"
+                title="Zoom out"
+                onClick={() => scene.current?.zoom(1.15)}
               >
-                {(e.player !== undefined || selected) && (
-                  <line
-                    x1={a.x * 60}
-                    y1={a.y * 60}
-                    x2={b.x * 60}
-                    y2={b.y * 60}
-                    stroke={selected ? '#fef5dc' : PLAYER_COLORS[colors[e.player!]]}
-                    strokeWidth="9"
-                    strokeLinecap="round"
-                  />
-                )}
-                {legal && (
-                  <>
-                    <line
-                      x1={a.x * 60}
-                      y1={a.y * 60}
-                      x2={b.x * 60}
-                      y2={b.y * 60}
-                      stroke="transparent"
-                      strokeWidth="23"
-                    />
-                    <line
-                      x1={(a.x * 3 + b.x) * 15}
-                      y1={(a.y * 3 + b.y) * 15}
-                      x2={(a.x + b.x * 3) * 15}
-                      y2={(a.y + b.y * 3) * 15}
-                      stroke="#fff"
-                      strokeWidth="6"
-                      strokeLinecap="round"
-                      strokeDasharray="3 6"
-                    />
-                  </>
-                )}
-              </g>
-            );
-          })}
-          {board.vertices.map((v) => {
-            const legal = vertices.includes(v.id),
-              x = v.x * 60,
-              y = v.y * 60,
-              building = v.building;
-            return (
-              <g
-                key={v.id}
-                role={legal ? 'button' : undefined}
-                tabIndex={legal ? 0 : undefined}
-                aria-label={`${building ? 'Upgrade city' : 'Build settlement'} ${v.id + 1}`}
-                className={legal ? 'ct-vertex-target' : ''}
-                onClick={() => legal && onVertex(v.id)}
-                onKeyDown={(e) => key(e, () => legal && onVertex(v.id))}
+                −
+              </button>
+              <button
+                aria-label="Zoom in"
+                title="Zoom in"
+                onClick={() => scene.current?.zoom(0.87)}
               >
-                {legal && (
-                  <circle cx={x} cy={y} r="12" fill="#fff9e5" stroke="#264a43" strokeWidth="2" />
-                )}
-                {building && (
-                  <svg
-                    x={x - 14}
-                    y={y - 17}
-                    width="28"
-                    height="27"
-                    viewBox="0 0 70 64"
-                    overflow="visible"
+                +
+              </button>
+              <button
+                aria-label="Reset view"
+                title="Reset view"
+                onClick={() => scene.current?.reset()}
+              >
+                ↺
+              </button>
+            </div>
+            {props.board.hexes.map((hex) => (
+              <span
+                key={`origin${hex.id}`}
+                className="ct3d-motion-origin"
+                aria-hidden="true"
+                data-motion-hex={hex.id}
+                data-world-x={hex.x}
+                data-world-z={hex.y}
+                data-world-y={0.48}
+              />
+            ))}
+            {mode === 'loading' && (
+              <div className="ct3d-loading" role="status">
+                <span />
+                Preparing the island…
+              </div>
+            )}
+            <div className="ct3d-target-layer">
+              {props.vertices.map((id) => {
+                const v = props.board.vertices[id];
+                return (
+                  <button
+                    key={`v${id}`}
+                    className="ct3d-target ct3d-vertex"
+                    data-world-x={v.x}
+                    data-world-z={v.y}
+                    data-world-y={0.36}
+                    aria-label={`${v.building ? 'Upgrade city' : 'Build settlement'} ${id + 1}`}
+                    onMouseEnter={() => hover('vertex', id)}
+                    onMouseLeave={() => scene.current?.hover()}
+                    onFocus={() => hover('vertex', id)}
+                    onBlur={() => scene.current?.hover()}
+                    onClick={() => props.onVertex(id)}
                   >
-                    <PieceArt kind={building.kind} color={PLAYER_COLORS[colors[building.player]]} />
-                  </svg>
-                )}
-                {legal && !building && (
-                  <text x={x} y={y + 5} textAnchor="middle" fontSize="15" fill="#264a43">
-                    +
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </div>
+                    <span aria-hidden="true">+</span>
+                    <span className="ct3d-target-name">
+                      {v.building ? 'Upgrade to city' : 'Build settlement'}
+                    </span>
+                  </button>
+                );
+              })}
+              {props.edges.map((id) => {
+                const edge = props.board.edges[id],
+                  a = props.board.vertices[edge.a],
+                  b = props.board.vertices[edge.b];
+                return (
+                  <button
+                    key={`e${id}`}
+                    className="ct3d-target ct3d-edge"
+                    data-world-x={(a.x + b.x) / 2}
+                    data-world-z={(a.y + b.y) / 2}
+                    data-world-y={0.34}
+                    aria-label={`Build road ${id + 1}`}
+                    onMouseEnter={() => hover('edge', id)}
+                    onMouseLeave={() => scene.current?.hover()}
+                    onFocus={() => hover('edge', id)}
+                    onBlur={() => scene.current?.hover()}
+                    onClick={() => props.onEdge(id)}
+                  >
+                    <span aria-hidden="true">·</span>
+                    <span className="ct3d-target-name">Build road</span>
+                  </button>
+                );
+              })}
+              {props.robber &&
+                props.board.hexes
+                  .filter((h) => h.id !== props.board.robber)
+                  .map((h) => (
+                    <button
+                      key={`h${h.id}`}
+                      className={`ct3d-target ct3d-hex ${props.selectedHex === h.id ? 'is-selected' : ''}`}
+                      data-world-x={h.x}
+                      data-world-z={h.y}
+                      data-world-y={0.6}
+                      aria-label={`Hex ${h.id + 1}: ${h.resource}, ${h.number || 'no production'}`}
+                      onMouseEnter={() => hover('hex', h.id)}
+                      onMouseLeave={() => scene.current?.hover()}
+                      onFocus={() => hover('hex', h.id)}
+                      onBlur={() => scene.current?.hover()}
+                      onClick={() => props.onHex(h.id)}
+                    >
+                      <span aria-hidden="true">⌖</span>
+                      <span className="ct3d-target-name">
+                        Move robber · {h.resource} {h.number || ''}
+                      </span>
+                    </button>
+                  ))}
+            </div>
+          </div>
+          <span className="ct3d-sr-only">
+            Drag the map to orbit. Scroll or pinch to zoom. Use the map controls or legal building
+            buttons with a keyboard.
+            {props.board.hexes
+              .map(
+                (h) =>
+                  ` Hex ${h.id + 1}: ${h.resource}, ${h.number || 'no production'}${props.board.robber === h.id ? ', robber' : ''}.`,
+              )
+              .join('')}
+          </span>
+        </>
+      )}
+      {props.overlayControls && (
+        <div className="ct3d-overlay-controls">{props.overlayControls}</div>
+      )}
+    </section>
   );
 }

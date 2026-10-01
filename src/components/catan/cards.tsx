@@ -1,12 +1,16 @@
-import type { CSSProperties } from 'react';
-import { DevelopmentArt, TerrainArt } from './art';
+'use client';
+
+import { useEffect, useState, type CSSProperties } from 'react';
+import Image from 'next/image';
+import { AwardArt, CardBackArt, DevelopmentArt, IllustratedCard, TerrainArt } from './art';
+import './cards-art.css';
 import { DEVELOPMENT_NAMES, type Resource, type Development } from '@/lib/catan/types';
 
 export const RESOURCE_INK: Record<Resource, string> = {
   wood: '#406e54',
   brick: '#b9694b',
-  sheep: '#91a660',
-  wheat: '#ce9d3f',
+  sheep: '#687c45',
+  wheat: '#a27a32',
   ore: '#657b88',
 };
 export function ResourceIcon({ kind }: { kind: Resource | 'any' }) {
@@ -14,8 +18,15 @@ export function ResourceIcon({ kind }: { kind: Resource | 'any' }) {
     <g aria-hidden="true" strokeLinejoin="round">
       {kind === 'wood' && (
         <>
-          <path d="M-6 10V-3M7 12V0" stroke="#78523b" strokeWidth="5" />
-          <path d="M-6-19L-18 4H6ZM7-12L-3 8H18Z" fill="#447452" stroke="#e4e6b0" />
+          <path d="M-17 3L8-14 19-9-5 10Z" fill="#aa7950" stroke="#63482f" />
+          <path d="M-5 10L19-9V0L-5 19Z" fill="#775135" stroke="#63482f" />
+          <ellipse cx="-11" cy="11" rx="8" ry="9" fill="#e6c38b" stroke="#785839" />
+          <ellipse cx="-11" cy="11" rx="4.5" ry="5.5" fill="none" stroke="#ac8350" />
+          <ellipse cx="-11" cy="11" rx="1.5" ry="2" fill="#ac8350" />
+          <path d="M-15-6L7-20 17-14-5 2Z" fill="#b48655" stroke="#67492f" />
+          <ellipse cx="-10" cy="-2" rx="7" ry="7" fill="#efd29b" stroke="#785839" />
+          <ellipse cx="-10" cy="-2" rx="3.5" ry="4" fill="none" stroke="#ac8350" />
+          <path d="M0-7L12-15M4 6L15-2" stroke="#d2aa72" />
         </>
       )}
       {kind === 'brick' && (
@@ -73,7 +84,12 @@ export function ResourceIcon({ kind }: { kind: Resource | 'any' }) {
             stroke="#536b77"
             strokeWidth="2"
           />
-          <path d="M-8-12L0 4 19-1M0 4L-10 18M0 4L12 17" stroke="#536b77" strokeWidth="2" />
+          <path
+            d="M-8-12L0 4 19-1M0 4L-10 18M0 4L12 17"
+            fill="none"
+            stroke="#536b77"
+            strokeWidth="2"
+          />
           <path d="M5-17L0 4-8-12Z" fill="#dae1d5" />
         </>
       )}
@@ -92,46 +108,33 @@ export function ResourceIcon({ kind }: { kind: Resource | 'any' }) {
   );
 }
 export function ResourceCard({ kind }: { kind: Resource | 'back' }) {
+  if (kind === 'back') return <CardBackArt resource />;
+  const title = { wood: 'Lumber', brick: 'Brick', sheep: 'Wool', wheat: 'Grain', ore: 'Ore' }[kind];
+  const land = {
+    wood: 'From the forest',
+    brick: 'From the hills',
+    sheep: 'From the pasture',
+    wheat: 'From the fields',
+    ore: 'From the mountains',
+  }[kind];
   return (
-    <svg viewBox="0 0 120 150" className="ct-card-art" aria-hidden="true">
-      <rect
-        x="2"
-        y="2"
-        width="116"
-        height="146"
-        rx="9"
-        fill="#faf3da"
-        stroke="#c4b18b"
-        strokeWidth="2"
-      />
-      <rect
+    <IllustratedCard title={title} category="Resource" accent={RESOURCE_INK[kind]} footer={land}>
+      <svg
         x="9"
-        y="9"
+        y="29"
         width="102"
-        height="132"
-        rx="5"
-        fill={kind === 'back' ? '#406b81' : RESOURCE_INK[kind]}
-      />
-      {kind === 'back' ? (
-        <>
-          <path d="M16 24L60 12 104 24V126L60 138 16 126Z" stroke="#a8c5c8" fill="none" />
-          <g transform="translate(60 75) scale(1.7)">
-            <ResourceIcon kind="any" />
-          </g>
-        </>
-      ) : (
-        <>
-          <svg x="12" y="12" width="96" height="70" viewBox="-60 -50 120 90">
-            <TerrainArt kind={kind} />
-          </svg>
-          <path d="M12 89Q60 67 108 89V136H12Z" fill="#f7e9c4" />
-          <g transform="translate(60 107)">
-            <ResourceIcon kind={kind} />
-          </g>
-          <path d="M18 129H38M82 129H102" stroke={RESOURCE_INK[kind]} />
-        </>
-      )}
-    </svg>
+        height="93"
+        viewBox="-62 -56 124 113"
+        preserveAspectRatio="xMidYMid slice"
+      >
+        <TerrainArt kind={kind} />
+      </svg>
+      <path d="M11 102Q60 83 109 103V124H11Z" fill="#23372c" opacity=".25" />
+      <ellipse cx="60" cy="110" rx="24" ry="5" fill="#263b2c" opacity=".23" />
+      <g transform="translate(60 92) scale(1.32)">
+        <ResourceIcon kind={kind} />
+      </g>
+    </IllustratedCard>
   );
 }
 export function CardStack({
@@ -141,6 +144,10 @@ export function CardStack({
   label,
   small = false,
   showEmpty = false,
+  onSelect,
+  selected = false,
+  disabled = false,
+  actionLabel,
 }: {
   count: number;
   resource?: Resource | 'back';
@@ -148,17 +155,25 @@ export function CardStack({
   label: string;
   small?: boolean;
   showEmpty?: boolean;
+  onSelect?: () => void;
+  selected?: boolean;
+  disabled?: boolean;
+  actionLabel?: string;
 }) {
   if (!count && !showEmpty) return null;
-  return (
+  const layers = Math.max(1, Math.min(count, small ? 3 : 4));
+  const ink = resource && resource !== 'back' ? RESOURCE_INK[resource] : '#365c60';
+  const stack = (
     <span
+      data-card-kind={resource ?? development ?? 'back'}
+      data-empty={count === 0 || undefined}
       className={`ct-card-stack ${small ? 'ct-card-stack-small' : ''}`}
       role="img"
       aria-label={`${count} ${label}`}
       title={`${count} ${label}`}
-      style={{ '--stack-depth': Math.max(0, Math.min(count - 1, 4)) } as CSSProperties}
+      style={{ '--stack-depth': layers - 1, '--card-ink': ink } as CSSProperties}
     >
-      {Array.from({ length: Math.max(1, Math.min(count, 5)) }, (_, i) => (
+      {Array.from({ length: layers }, (_, i) => (
         <span key={i} className="ct-stack-layer" style={{ '--layer': i } as CSSProperties}>
           {resource ? (
             <ResourceCard kind={resource} />
@@ -167,8 +182,26 @@ export function CardStack({
           )}
         </span>
       ))}
-      <b className="ct-card-count">{count}</b>
+      <b key={count} className="ct-card-count">
+        {count}
+      </b>
     </span>
+  );
+  if (!onSelect) return stack;
+  return (
+    <button
+      type="button"
+      className="ct-card-choice"
+      aria-label={actionLabel ?? `Select ${label} for trade`}
+      aria-pressed={selected}
+      disabled={disabled || count === 0}
+      onClick={onSelect}
+    >
+      {stack}
+      <span className="ct-card-choice-mark" aria-hidden="true">
+        {selected ? '✓' : '+'}
+      </span>
+    </button>
   );
 }
 export function PieceArt({
@@ -178,6 +211,34 @@ export function PieceArt({
   kind: 'road' | 'settlement' | 'city';
   color?: string;
 }) {
+  const [preview, setPreview] = useState<{ color: string; kind: string; src: string }>();
+  useEffect(() => {
+    let mounted = true;
+    import('./piece-previews')
+      .then(({ piecePreviews }) => {
+        if (!mounted) return;
+        const src = piecePreviews(color)?.[kind];
+        if (src) setPreview({ color, kind, src });
+      })
+      .catch(() => {
+        // Keep the inline fallback when graphics are unavailable.
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [color, kind]);
+  if (preview?.color === color && preview.kind === kind)
+    return (
+      <Image
+        src={preview.src}
+        width={70}
+        height={64}
+        alt=""
+        aria-hidden="true"
+        className="ct-piece-art"
+        unoptimized
+      />
+    );
   return (
     <svg viewBox="0 0 70 64" aria-hidden="true" className="ct-piece-art">
       <ellipse cx="35" cy="53" rx="28" ry="6" fill="#283e48" opacity=".12" />
@@ -235,9 +296,8 @@ export function AwardCard({
       aria-label={`${AWARD_NAMES[kind]}, 2 victory points`}
       title={AWARD_NAMES[kind]}
     >
-      <DevelopmentArt kind={kind === 'longestRoad' ? 'roads' : 'knight'} />
-      <span className="ct-award-ribbon">{small ? '2' : AWARD_NAMES[kind]}</span>
-      {!small && <b className="ct-award-points">2</b>}
+      <AwardArt kind={kind} />
+      {small && <span className="ct-award-ribbon">2</span>}
     </span>
   );
 }
