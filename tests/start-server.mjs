@@ -3,23 +3,18 @@ import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 // Only this test runner loads the HTTP mock. Normal builds and deployments never do.
-const mode = process.env.E2E_STRAVA_MODE ?? 'available';
-if (!['available', 'unavailable'].includes(mode)) throw new Error('Invalid Strava test mode');
+const mode = process.env.E2E_README_MODE ?? 'available';
+if (!['available', 'unavailable'].includes(mode)) throw new Error('Invalid README test mode');
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const next = fileURLToPath(new URL('../node_modules/next/dist/bin/next', import.meta.url));
-const mock = new URL('./fixtures/strava-mock.mjs', import.meta.url).href;
+const mock = new URL('./fixtures/profile-readme-mock.mjs', import.meta.url).href;
 const env = {
   ...process.env,
   NODE_ENV: 'production',
   NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${mock}`.trim(),
-  E2E_STRAVA_MODE: mode,
-  STRAVA_ACCESS_TOKEN: `synthetic-test-token-${mode}`,
-  STRAVA_CLIENT_ID: '',
-  STRAVA_CLIENT_SECRET: '',
-  STRAVA_REFRESH_TOKEN: '',
+  E2E_README_MODE: mode,
   NEXT_TELEMETRY_DISABLED: '1',
-  NEXT_PUBLIC_CARTO_BASEMAP_API_KEY: 'synthetic-carto-key',
 };
 
 let child;

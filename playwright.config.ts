@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const mode = process.env.E2E_STRAVA_MODE ?? 'available';
+const mode = process.env.E2E_README_MODE ?? 'available';
 if (!['available', 'unavailable'].includes(mode)) {
-  throw new Error(`Unknown Strava test mode: ${mode}`);
+  throw new Error(`Unknown README test mode: ${mode}`);
 }
 
 export default defineConfig({

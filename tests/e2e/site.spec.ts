@@ -3,38 +3,22 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import { test, expect } from './fixtures';
 
-test('homepage renders content and synthetic running stats', async ({ page }) => {
+test('homepage renders the profile README and a plain blog list', async ({ page }) => {
   expect((await page.goto('/'))?.status()).toBe(200);
   await expect(page).toHaveTitle('Arnav Kulkarni');
-  for (const section of ['About', 'Work', 'Running', 'Blogs']) {
-    await expect(page.getByRole('heading', { name: section, exact: true })).toBeVisible();
-  }
-  await expect(page.getByText(/Synced from Strava/)).toBeVisible();
-  await expect(page.getByText('Synthetic easy run for CI.')).toBeVisible();
-  await expect(
-    page.getByText('1 runs • 5 miles • 0.7 hours moving • 100 ft climbing'),
-  ).toBeVisible();
+  await expect(page.locator('#about')).toContainText('CS, Economics - Boston University');
+  await expect(page.locator('#about a').first()).toHaveAttribute(
+    'href',
+    'https://sites.bu.edu/casp/',
+  );
+  await expect(page.locator('#about')).toContainText('Synced README fixture.');
+  await expect(page.locator('main h1, main h2, main h3')).toHaveCount(0);
+  await expect(page.locator('#running, #work, .leaflet-container')).toHaveCount(0);
+  await expect(page.locator('#blogs a').first()).toBeVisible();
+  await expect(page.locator('#blogs ul')).toHaveCSS('list-style-type', 'none');
+  await expect(page.locator('#about')).toHaveCSS('font-size', '15px');
+  await expect(page.locator('#blogs a').first()).toHaveCSS('font-size', '15px');
   await expect(page.locator('footer')).toContainText('Site last updated');
-});
-
-test('both race maps render and zoom', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('.leaflet-container')).toHaveCount(2);
-  for (const name of ['Newport Half', 'Gloucester Half']) {
-    const map = page.getByLabel(`Pace map for ${name}`);
-    const route = map.locator('.leaflet-overlay-pane path').first();
-    await expect(route).toHaveAttribute('d', /^M/);
-    await expect(map.locator('.leaflet-tile-loaded').first()).toBeAttached();
-    const tileUrl = new URL(
-      (await map.locator('.leaflet-tile-loaded').first().getAttribute('src'))!,
-    );
-    expect(tileUrl.searchParams.get('key')).toBe('synthetic-carto-key');
-    await expect(map.getByRole('link', { name: 'OpenStreetMap', exact: true })).toBeVisible();
-    await expect(map.getByRole('link', { name: 'CARTO', exact: true })).toBeVisible();
-    const original = await route.getAttribute('d');
-    await map.getByRole('button', { name: 'Zoom in', exact: true }).click();
-    await expect.poll(() => route.getAttribute('d')).not.toBe(original);
-  }
 });
 
 const published: Array<{ url: string; title: string }> = [];
@@ -80,18 +64,19 @@ test('section navigation works at the current viewport', async ({ page, isMobile
   await page.goto('/');
   if (isMobile) {
     await page.getByRole('button', { name: 'Toggle navigation' }).click();
-    await page.getByRole('button', { name: 'Running', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Running', exact: true })).toBeHidden();
+    await page
+      .getByRole('navigation', { name: 'Mobile navigation' })
+      .getByRole('link', { name: 'Blogs', exact: true })
+      .click();
+    await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeHidden();
   } else {
-    await page.getByRole('link', { name: 'Running', exact: true }).click();
+    await page
+      .getByRole('navigation', { name: 'Page navigation' })
+      .getByRole('link', { name: 'Blogs', exact: true })
+      .click();
   }
-  await expect
-    .poll(() =>
-      page
-        .locator('#running')
-        .evaluate((element) => Math.round(element.getBoundingClientRect().top)),
-    )
-    .toBe(80);
+  await expect(page).toHaveURL('/#blogs');
+  await expect(page.locator('#blogs')).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
