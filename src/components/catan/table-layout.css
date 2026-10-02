@@ -1,4 +1,8 @@
 /* A single, compact playing surface. Lobby/site styles stay unchanged. */
+body:has(.ct-app.ct-playing) {
+  padding-bottom: 0;
+}
+
 body:has(.ct-app.ct-playing) > footer {
   display: none;
 }
