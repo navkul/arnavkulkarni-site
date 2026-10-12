@@ -6,12 +6,22 @@ import { test, expect } from './fixtures';
 test('homepage renders the profile README and a plain blog list', async ({ page }) => {
   expect((await page.goto('/'))?.status()).toBe(200);
   await expect(page).toHaveTitle('Arnav Kulkarni');
-  await expect(page.locator('#about')).toContainText('CS, Economics - Boston University');
+  await expect(page.locator('#about')).toContainText('@Boston University CS, Economics');
   await expect(page.locator('#about a').first()).toHaveAttribute(
     'href',
-    'https://sites.bu.edu/casp/',
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
   );
   await expect(page.locator('#about')).toContainText('Synced README fixture.');
+  const catan = page.locator('#about').getByRole('link', { name: '@Catan', exact: true });
+  await expect(catan).toHaveCount(1);
+  await expect(catan).toHaveAttribute('href', 'https://arnavkulkarni.com/catan');
+  await expect(catan.locator('..')).toHaveText('@Catan Considering going pro');
+  await expect(
+    page.locator('#about p').filter({
+      hasText:
+        "In my free time, I'm running/lifting or playing/watching soccer - Arsenal fan, unfortunately",
+    }),
+  ).toHaveCount(1);
   await expect(page.locator('main h1, main h2, main h3')).toHaveCount(0);
   await expect(page.locator('#running, #work, .leaflet-container')).toHaveCount(0);
   await expect(page.locator('#blogs a').first()).toBeVisible();
