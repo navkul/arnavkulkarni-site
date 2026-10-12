@@ -7,7 +7,9 @@ locked dependencies with `npm ci`.
 
 The homepage intro renders the public [GitHub profile README](https://github.com/navkul/navkul/blob/main/README.md).
 Next.js checks for updates on visits after a five-minute cache interval, so editing that README
-updates the intro without a site deployment. A failed or empty GitHub response uses the
+updates the intro without a site deployment. The site restores the original BU joke link and
+adds the Catan and hobbies paragraphs locally, keeping GitHub's version formal. Existing
+personal paragraphs in an older README are not duplicated. A failed or empty GitHub response uses the
 manually refreshed fallback in `src/lib/profile-readme.ts`. Remote Markdown is sanitized before rendering.
 The homepage no longer requests Strava data.
 
