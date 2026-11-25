@@ -2,7 +2,33 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "src/app/api/catan/evaluate/route.ts": {
-      "experimentalTriggers": [{ "type": "queue/v2beta", "topic": "catan-evaluations" }]
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "catan-evaluations"
+        }
+      ]
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/cv.pdf",
+      "destination": "https://raw.githubusercontent.com/navkul/arnavkulkarni-site/published-cv/cv.pdf"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/cv.pdf",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/pdf"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "inline; filename=\"Arnav-Kulkarni-CV.pdf\""
+        }
+      ]
+    }
+  ]
 }
