@@ -28,25 +28,17 @@ export default async function RootLayout({
       <body className={`${ibmPlexMono.variable} antialiased`}>
         {children}
         <footer className="site-footer border-t border-gray-200 bg-background">
-          <div className="mx-auto flex h-16 max-w-4xl items-center justify-center gap-3 px-3 sm:gap-6">
-            <a
-              href="/cv.pdf"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 text-xs underline underline-offset-4"
-            >
-              CV (PDF)
-            </a>
-            <div className="flex min-w-0 items-center gap-1 sm:gap-3">
-              {siteLastUpdated ? (
-                <p className="min-w-0 text-xs text-gray-500">
-                  Site last updated{' '}
-                  <time dateTime={siteLastUpdated}>
-                    {format(new Date(siteLastUpdated), 'MMMM d, yyyy')}
-                  </time>
-                </p>
-              ) : null}
-              <div className="flex shrink-0 items-center">
+          <div className="mx-auto flex h-16 max-w-4xl items-center justify-between gap-2 px-6">
+            <div className="flex min-w-0 items-center gap-1 sm:gap-2">
+              <a
+                href="/cv.pdf"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs underline underline-offset-4"
+              >
+                Curriculum vitae
+              </a>
+              <div className="flex shrink-0 items-center max-sm:[&>a]:w-8">
                 <a
                   href="https://github.com/navkul"
                   target="_blank"
@@ -88,6 +80,14 @@ export default async function RootLayout({
                 </a>
               </div>
             </div>
+            {siteLastUpdated ? (
+              <p className="min-w-0 text-right text-xs text-gray-500">
+                Site last updated{' '}
+                <time dateTime={siteLastUpdated}>
+                  {format(new Date(siteLastUpdated), 'MMMM d, yyyy')}
+                </time>
+              </p>
+            ) : null}
           </div>
         </footer>
       </body>
